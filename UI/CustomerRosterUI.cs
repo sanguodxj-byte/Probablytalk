@@ -133,6 +133,7 @@ internal static class CustomerRosterUI
                     string who;
                     if (line.Key == "player") who = Loc(modId, "roster_you", "You");
                     else if (line.Key == "credit") who = Loc(modId, "roster_credit", "Credit");
+                    else if (line.Key == "confront") who = Loc(modId, "roster_confront", "Called out");
                     else who = Loc(modId, "roster_customer", "Customer");
                     builder.AddLabel(who + "：" + line.Value);
                 }

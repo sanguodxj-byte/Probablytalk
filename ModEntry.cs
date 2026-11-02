@@ -80,6 +80,7 @@ public class ModEntry : IMod
         CustomerArchive.Shutdown();
         CreditBook.Shutdown();
         BargainBridge.Shutdown();
+        ClientInsight.Shutdown();
         ClientSpeech.Shutdown();
         log.Log("OnDisable");
     }

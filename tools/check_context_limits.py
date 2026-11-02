@@ -25,6 +25,8 @@ SCOPE = [
     os.path.join("AI", "StoreContext.cs"),
     os.path.join("AI", "ContextBrief.cs"),
     os.path.join("AI", "ClientSpeech.cs"),
+    os.path.join("AI", "ClientInsight.cs"),
+    os.path.join("Patches", "ClientInsightPatches.cs"),
     os.path.join("AI", "CustomerArchive.cs"),
     os.path.join("AI", "RegularManager.cs"),
     os.path.join("AI", "PromptBook.cs"),

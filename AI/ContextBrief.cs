@@ -293,6 +293,18 @@ internal static class ContextBrief
             if (!string.IsNullOrWhiteSpace(stance)) visit.Append(" | attitude: ").Append(stance);
             lines.Add(visit.ToString());
         }
+
+        AddInsight(lines, client["insight"] as JObject);
+    }
+
+    // 验货能力与当日对质：这些是他身上的事实，已经发生的不能撤回，他只能接着演
+    private static void AddInsight(List<string> lines, JObject insight)
+    {
+        if (insight == null) return;
+        string capacity = Str(insight, "capacity");
+        if (!string.IsNullOrWhiteSpace(capacity)) lines.Add("He can catch: " + capacity);
+        string confronted = Join(insight["confronted"] as JArray, " / ");
+        if (!string.IsNullOrWhiteSpace(confronted)) lines.Add("Already called out today: " + confronted);
     }
 
     // 往来记录：只在这次对话不走 messages 通道时出现（离店总结），逐条带角色、全文不截断

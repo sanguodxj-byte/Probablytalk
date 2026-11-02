@@ -156,6 +156,7 @@ internal static class StoreContext
         AddAttraction(body, client);
         AddOrders(body, client);
         body["tradeRepMultiplier"] = Math.Round(client.tradeReputationMultiplier, 2);
+        ClientInsight.Append(body, client);
         context["client"] = body;
     }
 
