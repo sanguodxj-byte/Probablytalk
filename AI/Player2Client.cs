@@ -290,13 +290,13 @@ public sealed class Player2Client
             {
                 logEntry.Channel = "local";
                 IAIClient channel = new Player2EndpointClient("local", local.BaseUrl, local.Key, timeout);
-                string text = await RunWithRetryAsync(channel, messages, _online, shutdownToken).ConfigureAwait(false);
-                if (text != null)
+                CompletionResult done = await RunWithRetryAsync(channel, messages, _online, shutdownToken).ConfigureAwait(false);
+                if (done.Ok)
                 {
                     SetOnline(true);
                     logEntry.State = ApiLogState.Success;
-                    logEntry.ResponseText = text;
-                    return text;
+                    RecordReply(logEntry, done, messages);
+                    return done.Text;
                 }
             }
 
@@ -306,13 +306,13 @@ public sealed class Player2Client
             {
                 logEntry.Channel = "cloud";
                 IAIClient channel = new Player2EndpointClient("cloud", _config.CloudBaseUrl, cloudKey, timeout);
-                string text = await RunWithRetryAsync(channel, messages, _online, shutdownToken).ConfigureAwait(false);
-                if (text != null)
+                CompletionResult done = await RunWithRetryAsync(channel, messages, _online, shutdownToken).ConfigureAwait(false);
+                if (done.Ok)
                 {
                     SetOnline(true);
                     logEntry.State = ApiLogState.Success;
-                    logEntry.ResponseText = text;
-                    return text;
+                    RecordReply(logEntry, done, messages);
+                    return done.Text;
                 }
             }
 
@@ -322,12 +322,12 @@ public sealed class Player2Client
             {
                 logEntry.Channel = "byo";
                 IAIClient channel = new ByoEndpointClient(byoEndpoint, _config.FallbackApiKey, _config.Model, timeout);
-                string text = await RunWithRetryAsync(channel, messages, retries: false, token: shutdownToken).ConfigureAwait(false);
-                if (text != null)
+                CompletionResult done = await RunWithRetryAsync(channel, messages, retries: false, token: shutdownToken).ConfigureAwait(false);
+                if (done.Ok)
                 {
                     logEntry.State = ApiLogState.Success;
-                    logEntry.ResponseText = text;
-                    return text;
+                    RecordReply(logEntry, done, messages);
+                    return done.Text;
                 }
             }
             logEntry.State = ApiLogState.Failed;
@@ -345,9 +345,28 @@ public sealed class Player2Client
         {
             sw.Stop();
             logEntry.ElapsedMs = sw.ElapsedMilliseconds;
+            logEntry.PromptChars = TokenMeter.CountContentChars(messages);
+            logEntry.ResponseChars = logEntry.ResponseText != null ? logEntry.ResponseText.Length : 0;
             ApiLogTracker.Record(logEntry);
             if (acquired) _chatGate.Release();
         }
+    }
+
+    // 成功回包入账：正文照录，计费数只观测不判断——端点回报 usage 就用回报值，
+    // 没回报就按字符估并在界面上标明是估算
+    private static void RecordReply(ApiLogEntry entry, CompletionResult result, JArray messages)
+    {
+        entry.ResponseText = result.Text;
+        if (result.UsageReported)
+        {
+            entry.PromptTokens = result.PromptTokens;
+            entry.CompletionTokens = result.CompletionTokens;
+            entry.TokensEstimated = false;
+            return;
+        }
+        entry.PromptTokens = TokenMeter.EstimateMessages(messages);
+        entry.CompletionTokens = TokenMeter.Estimate(result.Text);
+        entry.TokensEstimated = true;
     }
 
     private static string FormatMessagesPrompt(JArray messages)
@@ -363,8 +382,9 @@ public sealed class Player2Client
         return sb.ToString().Trim();
     }
 
-    // 重试策略集中在这里：通道只报「能不能重试」，次数与退避由主流程决定
-    private async Task<string> RunWithRetryAsync(IAIClient channel, JArray messages, bool retries, CancellationToken token)
+    // 重试策略集中在这里：通道只报「能不能重试」，次数与退避由主流程决定。
+    // 返回最后一次尝试的结果（成功带 usage，失败带错误），调用方按 Ok 判断
+    private async Task<CompletionResult> RunWithRetryAsync(IAIClient channel, JArray messages, bool retries, CancellationToken token)
     {
         int attempts = retries ? MaxAttemptsOnline : 1;
         for (int attempt = 1; ; attempt++)
@@ -373,20 +393,20 @@ public sealed class Player2Client
             if (result.Ok)
             {
                 SetLastError(null);
-                return result.Text;
+                return result;
             }
             if (result.Error != "cancelled")
             {
                 SetLastError("[" + channel.Name + "] " + result.Error);
             }
-            if (!result.Retryable || attempt >= attempts) return null;
+            if (!result.Retryable || attempt >= attempts) return result;
             try
             {
                 await Task.Delay(RetryDelays[Math.Min(attempt - 1, RetryDelays.Length - 1)], token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                return null;
+                return result;
             }
         }
     }

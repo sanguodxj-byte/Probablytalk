@@ -18,9 +18,22 @@ internal sealed class CompletionResult
     public bool Retryable;
     public int Status;
 
-    public static CompletionResult Success(string text)
+    // 端点回报的计费数，只给调试面板观测用，不参与任何判断
+    public int PromptTokens;
+    public int CompletionTokens;
+    public bool UsageReported;
+
+    public static CompletionResult Success(string text, int promptTokens, int completionTokens)
     {
-        return new CompletionResult { Ok = true, Text = text };
+        bool reported = promptTokens >= 0 || completionTokens >= 0;
+        return new CompletionResult
+        {
+            Ok = true,
+            Text = text,
+            PromptTokens = reported ? promptTokens : 0,
+            CompletionTokens = reported ? completionTokens : 0,
+            UsageReported = reported,
+        };
     }
 
     public static CompletionResult Failure(string error, bool retryable, int status = 0)
@@ -69,9 +82,9 @@ internal static class ChatHttp
             {
                 return CompletionResult.Failure(code + " " + response.StatusCode, code == 429 || code >= 500, code);
             }
-            string content = ExtractContent(body);
+            string content = ExtractContent(body, out int promptTokens, out int completionTokens);
             return content != null
-                ? CompletionResult.Success(content)
+                ? CompletionResult.Success(content, promptTokens, completionTokens)
                 : CompletionResult.Failure("unparseable response", false, code);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -93,12 +106,22 @@ internal static class ChatHttp
         }
     }
 
-    public static string ExtractContent(string body)
+    // 正文与计费数一次解析：正文缺失即视为不可解析；端点不带 usage 时返回 -1 而不是 0，
+    // 别把「端点没回报」当成「零消耗」
+    public static string ExtractContent(string body, out int promptTokens, out int completionTokens)
     {
+        promptTokens = -1;
+        completionTokens = -1;
         if (string.IsNullOrEmpty(body)) return null;
         try
         {
             JObject response = JObject.Parse(body);
+            JToken usage = response["usage"];
+            if (usage != null)
+            {
+                promptTokens = (int?)usage["prompt_tokens"] ?? -1;
+                completionTokens = (int?)usage["completion_tokens"] ?? -1;
+            }
             if (response["choices"]?[0]?["message"]?["content"] is JValue value && value.Type == JTokenType.String)
             {
                 return (string)value;

@@ -258,7 +258,7 @@ internal sealed class SettingsUI : MonoBehaviour
         // 顶栏：统计指标与控制按钮
         b.BeginRow(6f, TextAnchor.MiddleLeft);
         string channelStatus = client != null && client.IsOnline ? Loc("dbg_online", "Online") : Loc("dbg_offline", "Offline");
-        string stats = $"{Loc("dbg_total_calls", "Calls")}: {ApiLogTracker.TotalCalls} | {channelStatus}";
+        string stats = $"{Loc("dbg_total_calls", "Calls")}: {ApiLogTracker.TotalCalls} | {TokenTotals()} | {channelStatus}";
         b.AddLabel(stats, "dbg_stats_label");
         dbgStatsLabel = b.Last;
         b.AddFlexibleSpace();
@@ -286,7 +286,9 @@ internal sealed class SettingsUI : MonoBehaviour
             {
                 ApiLogEntry entry = entries[i];
                 b.BeginRow(4f, TextAnchor.MiddleLeft);
-                string rowTitle = $"[{entry.Timestamp:HH:mm:ss}] {entry.Channel} ({entry.ElapsedMs}ms) - {entry.State}";
+                string tokenPart = TokenLabel(entry);
+                string timing = entry.ElapsedMs + "ms" + (string.IsNullOrEmpty(tokenPart) ? string.Empty : " | " + tokenPart);
+                string rowTitle = $"[{entry.Timestamp:HH:mm:ss}] {entry.Channel} ({timing}) - {entry.State}";
                 bool isSelected = selectedLog != null && selectedLog.Id == entry.Id;
                 string btnLabel = isSelected ? $"> {rowTitle}" : rowTitle;
                 b.AddButton(btnLabel, () => SelectLogEntry(entry), "log_" + entry.Id);
@@ -361,7 +363,10 @@ internal sealed class SettingsUI : MonoBehaviour
             return;
         }
 
-        detailMetaLabel?.SetText($"[{selectedLog.Timestamp:yyyy-MM-dd HH:mm:ss}] {selectedLog.Channel} - {selectedLog.State} ({selectedLog.ElapsedMs}ms)");
+        string detailToken = TokenLabel(selectedLog);
+        detailMetaLabel?.SetText($"[{selectedLog.Timestamp:yyyy-MM-dd HH:mm:ss}] {selectedLog.Channel} - {selectedLog.State} "
+            + $"({selectedLog.ElapsedMs}ms | {selectedLog.PromptChars} {Loc("dbg_chars", "chars")}"
+            + (string.IsNullOrEmpty(detailToken) ? string.Empty : " | " + detailToken) + ")");
         detailErrorLabel?.SetText(string.IsNullOrEmpty(selectedLog.Error) ? string.Empty : $"{Loc("dbg_error", "Error")}: {selectedLog.Error}");
         if (detailPromptInput?.input != null) detailPromptInput.input.text = selectedLog.PromptText ?? string.Empty;
         if (detailResponseInput?.input != null) detailResponseInput.input.text = selectedLog.ResponseText ?? string.Empty;
@@ -372,6 +377,9 @@ internal sealed class SettingsUI : MonoBehaviour
         if (selectedLog == null) return;
         var sb = new StringBuilder();
         sb.AppendLine($"[{selectedLog.Timestamp:yyyy-MM-dd HH:mm:ss}] {selectedLog.Channel} - {selectedLog.State} ({selectedLog.ElapsedMs}ms)");
+        string copyToken = TokenLabel(selectedLog);
+        sb.AppendLine($"{selectedLog.PromptChars} prompt chars | {selectedLog.ResponseChars} response chars"
+            + (string.IsNullOrEmpty(copyToken) ? string.Empty : " | " + copyToken));
         if (!string.IsNullOrEmpty(selectedLog.Error)) sb.AppendLine($"Error: {selectedLog.Error}");
         sb.AppendLine("--- Prompt ---");
         sb.AppendLine(selectedLog.PromptText);
@@ -407,6 +415,25 @@ internal sealed class SettingsUI : MonoBehaviour
         {
             OpenDebugWindow();
         }
+    }
+
+    // token 口径要分清来源：端点回报 usage 的是实测值，估算值一律加 ~ 前缀，
+    // 免得把 TokenMeter 的字符粗估当成实测消耗读
+    private static string TokenLabel(ApiLogEntry entry)
+    {
+        if (entry == null || (entry.PromptTokens <= 0 && entry.CompletionTokens <= 0)) return string.Empty;
+        string mark = entry.TokensEstimated ? "~" : string.Empty;
+        return $"{LocStatic("dbg_tokens", "tokens")} {mark}{entry.PromptTokens}->{mark}{entry.CompletionTokens}";
+    }
+
+    private static string TokenTotals()
+    {
+        string text = $"{LocStatic("dbg_tokens", "tokens")} {ApiLogTracker.TotalPromptTokens}->{ApiLogTracker.TotalCompletionTokens}";
+        if (ApiLogTracker.TotalEstimated > 0)
+        {
+            text += $" ({ApiLogTracker.TotalEstimated} {LocStatic("dbg_tokens_est", "estimated")})";
+        }
+        return text;
     }
 
     // ================= 设置（齿轮） =================
