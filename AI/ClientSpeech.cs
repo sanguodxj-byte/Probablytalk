@@ -115,6 +115,12 @@ internal static class ClientSpeech
         {
             if (client == null || string.IsNullOrEmpty(client.identifier) || string.IsNullOrEmpty(client.displayName)) return;
             SpeechPack pack = GetPack(client.identifier, CurrentDay());
+            if (pack != null && pack.State == PackState.Failed)
+            {
+                // 预生成失败：左上角报错，随后照常走原版台词
+                NotifyPregenFailed();
+                return;
+            }
             if (pack == null || pack.State != PackState.Success || string.IsNullOrWhiteSpace(pack.Opening)) return;
             Dialogue main = client.mainDialogue;
             if (main == null) return;
@@ -125,6 +131,25 @@ internal static class ClientSpeech
         {
             // 前缀抛异常会中断游戏自己的对话启动，这里必须全吞，失败即原版台词
             if (_log != null) _log.Warning("ClientSpeech apply failed: " + ex.Message);
+        }
+    }
+
+    // 预生成失败：左上角报错，随后走原版台词（不阻断原版）
+    private static void NotifyPregenFailed()
+    {
+        try
+        {
+            if (StoreUIManager.Instance == null) return;
+            string message = ModHelper.GetLocalized(ModEntry.ModId, "pregen_failed");
+            if (string.IsNullOrEmpty(message) || message == "pregen_failed")
+            {
+                message = "AI 开场白生成失败，已使用原版台词";
+            }
+            StoreUIManager.Instance.Notify(message, "sec");
+        }
+        catch (Exception ex)
+        {
+            if (_log != null) _log.Warning("pregen failed notify error: " + ex.Message);
         }
     }
 
