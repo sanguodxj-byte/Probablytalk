@@ -325,7 +325,9 @@ internal static class ContextBrief
             string label = marks.Count > 0 ? text + " [" + string.Join(", ", marks) + "]" : text;
             int price = Int(feature, "price");
             string stage = Str(feature, "stage");
-            if (price != 0 && !string.IsNullOrWhiteSpace(stage))
+            // 游戏自己的文案有时已经把百分比写进去了（如「-沟渠水 (-90%)」），
+            // 那种就别再补一遍；只有文案里没带数的（香水、敲诈）才由我们算好补上
+            if (price != 0 && !string.IsNullOrWhiteSpace(stage) && !text.Contains(Math.Abs(price) + "%"))
             {
                 label += "（" + stage + (price > 0 ? " +" : " −") + Math.Abs(price) + "%）";
             }

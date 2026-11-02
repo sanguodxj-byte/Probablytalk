@@ -403,12 +403,27 @@ internal static class StoreContext
             if (string.IsNullOrWhiteSpace(display)) continue;
             JObject row = new JObject { ["text"] = display.Trim() };
             if (exposed) row["exposed"] = true;
-            // 标签是伪造的这件事，只有被当场验穿之后他才可能知道；没验穿就别说破
-            if (exposed && feature.fakeCondition != null) row["fake"] = true;
+            // 「标签是伪造的」的判据是 useCondition 且真假条件对不上（ItemFeature.IsFeatureMatch），
+            // 不是 fakeCondition 非空——瓶装水的纯度特性本来就带 fakeCondition，
+            // 拿它当伪造会把每件正常货都标成有鬼。而且没被验穿之前，他不该知道标签是假的
+            if (exposed && IsForgedLabel(feature)) row["fake"] = true;
             AddPriceEffect(row, feature);
             list.Add(row);
         }
         return list;
+    }
+
+    // 标签与真身是否对不上：游戏自己的判定，实机验过瓶装水 fakeCondition 非空但两者一致
+    private static bool IsForgedLabel(ItemFeature feature)
+    {
+        try
+        {
+            return feature.useCondition && !feature.IsFeatureMatch();
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     // 玩家强改进价格的**结果**：香水、敲诈、威胁在原版里都是挂在货上的临时特性
