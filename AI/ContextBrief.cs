@@ -19,9 +19,9 @@ internal static class ContextBrief
 
         AddShop(lines, context["shop"] as JObject);
         AddClient(lines, context["client"] as JObject);
-        AddGoods(lines, "His goods", context["clientGoods"] as JArray);
-        AddGoods(lines, "Counter", context["counter"] as JArray);
-        AddGoods(lines, "Showcase", context["showcase"] as JArray);
+        AddGoods(lines, "Your goods (you are selling these)", context["clientGoods"] as JArray);
+        AddGoods(lines, "Player's counter (you can buy)", context["counter"] as JArray);
+        AddGoods(lines, "Player's showcase", context["showcase"] as JArray);
         AddDeal(lines, context["deal"] as JObject);
         AddRegular(lines, context["regular"] as JObject);
         return string.Join("\n", lines);
@@ -124,7 +124,7 @@ internal static class ContextBrief
         if (!string.IsNullOrWhiteSpace(who)) lines.Add("Identity: " + who);
 
         string intent = IntentText(Str(client, "intent"));
-        if (!string.IsNullOrWhiteSpace(intent)) lines.Add("Intent: " + intent);
+        if (!string.IsNullOrWhiteSpace(intent)) lines.Add("Your intent: " + intent);
 
         var budget = new StringBuilder("Budget: ").Append(Int(client, "budget"));
         if (client["cash"] != null) budget.Append(" | cash ").Append(Int(client, "cash"));
@@ -140,11 +140,11 @@ internal static class ContextBrief
         }
 
         string wants = Join(client["wants"] as JArray);
-        if (!string.IsNullOrWhiteSpace(wants)) lines.Add("Wants: " + wants);
+        if (!string.IsNullOrWhiteSpace(wants)) lines.Add("You want to buy: " + wants);
         string wantsTags = Join(client["wantsTags"] as JArray);
-        if (!string.IsNullOrWhiteSpace(wantsTags)) lines.Add("Also accepts categories: " + wantsTags);
+        if (!string.IsNullOrWhiteSpace(wantsTags)) lines.Add("You also accept categories: " + wantsTags);
         string refuses = Join(client["refuses"] as JArray);
-        if (!string.IsNullOrWhiteSpace(refuses)) lines.Add("Refuses: " + refuses);
+        if (!string.IsNullOrWhiteSpace(refuses)) lines.Add("You refuse: " + refuses);
 
         JObject bargain = client["bargain"] as JObject;
         if (bargain != null)
@@ -436,13 +436,15 @@ internal static class ContextBrief
         }
     }
 
+    // 方向行必须用顾客第一人称：系统提示里「你」＝顾客，
+    // 若这里把 you 当成玩家，模型会把买卖方向理解反，进而选反 bargain act
     private static string DirectionText(string direction)
     {
         switch (direction)
         {
-            case "playerSells": return "he is buying from you";
-            case "playerBuys": return "he is selling to you";
-            case "both": return "he is buying and selling";
+            case "playerSells": return "you are buying from the player";
+            case "playerBuys": return "you are selling to the player";
+            case "both": return "you are buying from and selling to the player";
             default: return null;
         }
     }

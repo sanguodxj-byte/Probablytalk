@@ -159,27 +159,34 @@ internal static class StoreContext
         context["client"] = body;
     }
 
-    // 顾客自带货物：柜台上归属非玩家的物品就是本轮他拿来卖的东西（成交前才会在柜上）
+    // 顾客自带货物：柜台上（前区）归属非玩家的物品就是本轮他拿来卖的东西。
+    // 只取 frontInvinvElement——后区（柜台下）玩家看不见，也不该进入上下文
     private static void AddClientGoods(JObject context)
     {
         EmporiumEntry entry = EmporiumEntry.Instance;
         if (entry == null) return;
-        List<GameItem> items = entry.GetAllNonOwnedItem();
-        if (items == null || items.Count == 0) return;
-        context["clientGoods"] = CountedItems(items);
+        GameGridInventory front = entry.frontInvinvElement;
+        if (front == null || front.childItems == null) return;
+        List<GameItem> items = new List<GameItem>();
+        foreach (GameItem item in front.childItems)
+        {
+            if (item != null && !GeneralHelper.IsItemOwned(item)) items.Add(item);
+        }
+        if (items.Count > 0) context["clientGoods"] = CountedItems(items);
     }
 
-    // 柜台与招牌：柜台取柜台区全部物品里的玩家自有部分（在售），招牌取展示柜（临街可见的陈列）
+    // 柜台与招牌：柜台只取前区（摆在柜台上、顾客看得见）里玩家自有的在售品，
+    // 后区（柜台下）不进入上下文；招牌取展示柜（临街可见的陈列）
     private static void AddFront(JObject context)
     {
         EmporiumEntry entry = EmporiumEntry.Instance;
         if (entry == null) return;
 
         List<GameItem> counter = new List<GameItem>();
-        List<GameItem> counters = entry.GetCountersItems();
-        if (counters != null)
+        GameGridInventory front = entry.frontInvinvElement;
+        if (front != null && front.childItems != null)
         {
-            foreach (GameItem item in counters)
+            foreach (GameItem item in front.childItems)
             {
                 if (item == null) continue;
                 if (!GeneralHelper.IsItemOwned(item)) continue;

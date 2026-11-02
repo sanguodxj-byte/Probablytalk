@@ -63,7 +63,7 @@ internal static class PromptBook
                 .Append(sells ? "discount" : "buyingDiscount")
                 .Append("\",\"percent\":20}");
         }
-        sample.Append(",\"credit\":\"lend\",\"memory\":\"一句话\"}");
+        sample.Append(",\"credit\":\"lend\"}");
 
         var lines = new StringBuilder();
         lines.Append("输出格式：只回一个 JSON 对象，不要任何别的文字。\n\n");
@@ -75,13 +75,13 @@ internal static class PromptBook
             var actions = new List<string>();
             if (sells)
             {
-                actions.Add("discount（卖给他的东西更便宜）");
-                actions.Add("markup（卖给他的东西更贵）");
+                actions.Add("discount（玩家卖货给你时降价，你少付）");
+                actions.Add("markup（玩家卖货给你时抬价，你多付）");
             }
             if (buys)
             {
-                actions.Add("buyingDiscount（收他的东西时少付）");
-                actions.Add("buyingMarkup（收他的东西时多付）");
+                actions.Add("buyingDiscount（你卖货给玩家时他少付，你少收）");
+                actions.Add("buyingMarkup（你卖货给玩家时他多付，你多收）");
             }
             lines.Append("\nbargain：只在谈价时加。act 取 ")
                 .Append(string.Join(" 或 ", actions.ToArray()))
@@ -92,7 +92,8 @@ internal static class PromptBook
         }
 
         lines.Append("\ncredit：只在谈欠账时加，取 lend（同意赊账）或 collect（收账）。");
-        lines.Append("\nmemory：每次一句，他这次透露的偏好或近况。");
+        lines.Append("\n玩家这句话没有明确要求改价、赊账或成交时，不要带 bargain 或 credit；"
+            + "用一句自然的追问或回应接住话头，不要替他做决定。");
         lines.Append("\n用不到的键省掉。");
 
         return new PromptEntry("format", lines.ToString());
@@ -105,9 +106,9 @@ internal static class PromptBook
         {
             "输出格式：只回一个 JSON 对象，不要任何别的文字。",
             "",
-            "{\"opening\":\"一到两句\",\"chat\":\"一到两句，与买卖无关\",\"memory\":\"一句他的偏好或近况\"}",
+            "{\"opening\":\"一到两句\",\"chat\":\"一到两句，与买卖无关\"}",
             "",
-            "opening 与 chat 都要有，memory 一句。",
+            "opening 与 chat 都要有。",
             "Original line 是他平时的口吻，接近但别照抄；从 His goods / Counter / Events 里挑一处点题，不要罗列。",
         }));
     }
