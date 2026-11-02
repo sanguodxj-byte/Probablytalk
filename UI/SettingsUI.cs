@@ -470,15 +470,15 @@ internal sealed class SettingsUI : MonoBehaviour
 
         // 生成节奏
         SectionHeader(b, "section_speech", "Speech Pacing", "sec_speech");
-        LabeledSlider(b, "opt_cap_label", "Daily Request Cap", "opt_cap_tooltip", "Max AI speech requests per in-game day. 0 turns AI speech off.",
+        LabeledStepper(b, "opt_cap_label", "Daily Request Cap", "opt_cap_tooltip", "Max AI speech requests per in-game day. 0 turns AI speech off.",
             0f, 60f, SpeechSettings.DailyRequestCap,
             v => { SpeechSettings.DailyRequestCap = Mathf.RoundToInt(v); ApplyCapGate(); }, "cap");
-        Gate(LabeledSlider(b, "opt_linelen_label", "Line Length Cap", "opt_linelen_tooltip", "Max characters kept from a single AI line.",
+        LabeledStepper(b, "opt_linelen_label", "Line Length Cap", "opt_linelen_tooltip", "Max characters kept from a single AI line.",
             80f, 2000f, SpeechSettings.LineLength,
-            v => SpeechSettings.LineLength = Mathf.RoundToInt(v), "linelen"));
-        Gate(LabeledSlider(b, "opt_timeout_label", "Request Timeout (s)", "opt_timeout_tooltip", "Per-request timeout in seconds.",
+            v => SpeechSettings.LineLength = Mathf.RoundToInt(v), "linelen", gated: true);
+        LabeledStepper(b, "opt_timeout_label", "Request Timeout (s)", "opt_timeout_tooltip", "Per-request timeout in seconds.",
             10f, 600f, SpeechSettings.TimeoutSeconds,
-            v => SpeechSettings.TimeoutSeconds = Mathf.RoundToInt(v), "timeout"));
+            v => SpeechSettings.TimeoutSeconds = Mathf.RoundToInt(v), "timeout", gated: true);
 
         // 上限为 0 的提示横幅：紧跟生成节奏一组，默认藏起来，由 ApplyCapGate 现算现显
         b.BeginRow(4f, TextAnchor.MiddleLeft);
@@ -490,16 +490,16 @@ internal sealed class SettingsUI : MonoBehaviour
 
         // 议价门槛：提示词里下发的数字与这里同一份设置，模型看到的上下限就是真正生效的
         SectionHeader(b, "section_bargain", "Bargain Limits", "sec_bargain");
-        LabeledSlider(b, "opt_bargain_min_label", "Bargain Min Percent", "opt_bargain_min_tooltip", "Lower bound of one bargain step.",
+        LabeledStepper(b, "opt_bargain_min_label", "Bargain Min Percent", "opt_bargain_min_tooltip", "Lower bound of one bargain step.",
             1f, 50f, SpeechSettings.BargainMinPercent,
             v => SpeechSettings.BargainMinPercent = Mathf.RoundToInt(v), "bargain_min");
-        LabeledSlider(b, "opt_bargain_max_label", "Bargain Max Percent", "opt_bargain_max_tooltip", "Upper bound of one bargain step.",
+        LabeledStepper(b, "opt_bargain_max_label", "Bargain Max Percent", "opt_bargain_max_tooltip", "Upper bound of one bargain step.",
             5f, 90f, SpeechSettings.BargainMaxPercent,
             v => SpeechSettings.BargainMaxPercent = Mathf.RoundToInt(v), "bargain_max");
-        LabeledSlider(b, "opt_bargain_cum_label", "Total Bargain Cap", "opt_bargain_cum_tooltip", "Total movement allowed for one customer.",
+        LabeledStepper(b, "opt_bargain_cum_label", "Total Bargain Cap", "opt_bargain_cum_tooltip", "Total movement allowed for one customer.",
             5f, 90f, SpeechSettings.BargainMaxCumulative,
             v => SpeechSettings.BargainMaxCumulative = Mathf.RoundToInt(v), "bargain_cum");
-        LabeledSlider(b, "opt_bargain_rounds_label", "Bargain Rounds", "opt_bargain_rounds_tooltip", "Bargain rounds one customer allows per day.",
+        LabeledStepper(b, "opt_bargain_rounds_label", "Bargain Rounds", "opt_bargain_rounds_tooltip", "Bargain rounds one customer allows per day.",
             1f, 5f, SpeechSettings.BargainMaxRounds,
             v => SpeechSettings.BargainMaxRounds = Mathf.RoundToInt(v), "bargain_rounds");
 
@@ -511,11 +511,6 @@ internal sealed class SettingsUI : MonoBehaviour
         CustomUIBuilder.RebuildLayout(gearWindow.ContentRoot);
     }
 
-    private void Gate(CustomUIElement element)
-    {
-        if (element != null) capGated.Add(element);
-    }
-
     // 每日上限=0 等价于关闭 AI 发言：单句长度与超时这时没有对象可作用，灰掉比留着更诚实；
     // 上限滑条自己不能被关掉
     private void ApplyCapGate()
@@ -525,18 +520,56 @@ internal sealed class SettingsUI : MonoBehaviour
         capNote?.SetText(on ? string.Empty : Loc("group_speech_note", "Daily request cap is 0: no AI speech is requested."));
     }
 
-    private CustomUIElement LabeledSlider(CustomUIBuilder b, string labelKey, string labelFallback,
-        string tipKey, string tipFallback, float min, float max, float initial, Action<float> onChanged, string id)
+    // 游戏的 CustomUIManager 没给 Slider 分配预制体：实测日志逐条报
+    // "[CustomUI] No prefab assigned for 'slider' on CustomUIManager, element skipped"，
+    // 滑条整排静默塌成空元素，只剩标签。数值项因此改用 −/＋ 步进，只依赖已确认存在的 Button/Label。
+    private CustomUIElement LabeledStepper(CustomUIBuilder b, string labelKey, string labelFallback,
+        string tipKey, string tipFallback, float min, float max, float initial, Action<float> onChanged, string id,
+        bool gated = false)
     {
+        int step = StepperStep(min, max);
+        int value = Mathf.RoundToInt(Mathf.Clamp(initial, min, max));
+        string tip = Loc(tipKey, tipFallback) + "  [" + Mathf.RoundToInt(min) + "-" + Mathf.RoundToInt(max) + "]";
+
+        Action<int> apply = null;
         b.BeginRow(4f, TextAnchor.MiddleLeft);
         b.AddLabel(Loc(labelKey, labelFallback), "lbl_" + id);
         b.AddFlexibleSpace();
-        b.AddSlider(min, max, initial, onChanged, true, id);
-        CustomUIElement slider = b.Last;
-        slider.SetFixedWidth(280f);
-        slider.SetTooltip(Loc(tipKey, tipFallback) + "  [" + Mathf.RoundToInt(min) + "-" + Mathf.RoundToInt(max) + "]");
+        b.AddButton("-", () => apply(-1), id + "_down");
+        CustomUIElement down = b.Last;
+        b.AddLabel(value + "/" + Mathf.RoundToInt(max), "val_" + id);
+        CustomUIElement readout = b.Last;
+        readout.SetFixedWidth(96f);
+        b.AddButton("+", () => apply(1), id + "_up");
+        CustomUIElement up = b.Last;
         b.End();
-        return slider;
+
+        apply = delta =>
+        {
+            value = Mathf.RoundToInt(Mathf.Clamp(value + delta * step, min, max));
+            readout.SetText(value + "/" + Mathf.RoundToInt(max));
+            onChanged(value);
+        };
+        down?.SetTooltip(tip);
+        up?.SetTooltip(tip);
+        if (gated)
+        {
+            capGated.Add(down);
+            capGated.Add(up);
+        }
+        return readout;
+    }
+
+    // 步长取量程的 1/20 再吸附到"好看"的档位：量程差两个数量级，固定步长要么按不动要么按到手酸
+    private static int StepperStep(float min, float max)
+    {
+        float raw = Mathf.Max(1f, (max - min) / 20f);
+        int[] nice = { 1, 2, 5, 10, 25, 50, 100, 250, 500 };
+        foreach (int n in nice)
+        {
+            if (raw <= n) return n;
+        }
+        return 1000;
     }
 
     // ================= 构建辅助 =================
