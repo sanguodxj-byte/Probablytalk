@@ -276,6 +276,7 @@ internal static class ContextBrief
     {
         if (items == null || items.Count == 0) return;
         var parts = new List<string>();
+        var slips = new List<string>();
         foreach (JToken token in items)
         {
             JObject item = token as JObject;
@@ -296,8 +297,13 @@ internal static class ContextBrief
             if (!string.IsNullOrWhiteSpace(features)) notes.Add(features);
             if (notes.Count > 0) text.Append(" (").Append(string.Join("; ", notes)).Append(")");
             parts.Add(text.ToString());
+
+            string slip = Str(item, "note");
+            if (!string.IsNullOrWhiteSpace(slip)) slips.Add(name + "：" + slip);
         }
         if (parts.Count > 0) lines.Add(label + ": " + string.Join("; ", parts));
+        // 纸条正文（鉴定单等）自己就带换行，塞进一行会把整份简报挤变形，单独成行
+        foreach (string slip in slips) lines.Add("Written on it — " + slip);
     }
 
     // 特性行：验穿的打 [exposed]、确认伪造的打 [fake]；

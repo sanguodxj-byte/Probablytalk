@@ -297,41 +297,66 @@ internal static class StoreContext
     }
 
     // 同名物品聚成一条并计数：货架上一格一件，逐条平铺会浪费上下文。
-    // 每条带单价估值与该物品的可见状态（锈蚀/凹痕/过期…），这是讨价还价时唯一能落到实处的依据
+    // 每条带单价估值与该物品的可见状态（锈蚀/凹痕/过期…），这是讨价还价时唯一能落到实处的依据。
+    // 例外：带正文的纸条不并——两张鉴定单内容不同，并成一条就只剩一张的字
     private static JArray CountedItems(List<GameItem> items)
     {
         List<string> order = new List<string>();
         Dictionary<string, int> counts = new Dictionary<string, int>();
         Dictionary<string, GameItem> samples = new Dictionary<string, GameItem>();
+        Dictionary<string, string> titles = new Dictionary<string, string>();
         foreach (GameItem item in items)
         {
             if (item == null) continue;
             string name = item.GetDisplayName();
             if (string.IsNullOrEmpty(name)) continue;
             name = name.Trim();
-            if (!counts.ContainsKey(name))
+            string slip = SlipBody(item);
+            string key = string.IsNullOrEmpty(slip) ? name : name + "\u0000" + slip;
+            if (!counts.ContainsKey(key))
             {
-                order.Add(name);
-                counts[name] = 0;
-                samples[name] = item;
+                order.Add(key);
+                counts[key] = 0;
+                samples[key] = item;
+                titles[key] = name;
             }
-            counts[name]++;
+            counts[key]++;
         }
         JArray array = new JArray();
-        foreach (string name in order)
+        foreach (string key in order)
         {
-            JObject row = new JObject { ["name"] = name };
-            int count = counts[name];
+            JObject row = new JObject { ["name"] = titles[key] };
+            int count = counts[key];
             if (count > 1) row["count"] = count;
-            GameItem sample = samples[name];
+            GameItem sample = samples[key];
             long value = SafeValue(sample);
             if (value > 0) row["value"] = value;
             AddList(row, "types", sample.itemTypes);
             JArray features = VisibleFeatures(sample);
             if (features.Count > 0) row["state"] = features;
+            string slip = SlipBody(sample);
+            if (!string.IsNullOrWhiteSpace(slip)) row["note"] = slip;
             array.Add(row);
         }
         return array;
+    }
+
+    // 纸条正文（鉴定单、威胁信、导师笔记）就印在纸上，他拿在手里读得到。
+    // 这是鉴定结果进上下文的唯一正当通道：游戏把估价与真价一并写在单子上摆上柜台
+    // （AppraisalServiceHelper.GiveAppraisalFee → PreBuiltItemHelper.CreatePaperWithText，
+    // 正文存 SLIP_BODY 标签），不是我们替它算出来的。读不到就返回 null，不挤掉整件货
+    private static string SlipBody(GameItem item)
+    {
+        try
+        {
+            if (item == null || !item.IsTag("SLIP_BODY")) return null;
+            string body = item.GetTagReadonly("SLIP_BODY").GetString();
+            return string.IsNullOrWhiteSpace(body) ? null : body.Trim();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     // 物品估值：走游戏自己的议价估值，异常时按无价处理，不让上下文组装把整条管线带崩
