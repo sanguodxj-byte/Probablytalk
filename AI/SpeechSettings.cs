@@ -3,14 +3,14 @@ using UnityEngine;
 
 namespace Probablytalk;
 
-// 生成节奏设置的持久化存储：每日请求上限 / 单句长度上限 / 请求超时。
+// 生成节奏与议价门槛的持久化存储：每日请求上限 / 单句长度 / 请求超时 + 议价四项。
 //
-// 为什么单独一份存储：这三项改由游戏原生「选项」菜单承载（见 SpeechOptions），而 ModConfig
+// 为什么单独一份存储：这七项由模组自己的设置窗口承载（见 SettingsUI 的齿轮窗口），而 ModConfig
 // 的条目一旦 Define 就必然出现在模组设置窗口里、没有「隐藏条目」的口子。为遵守「每个概念只定义
 // 一处」，它们不再注册进 ModConfig，改由这里自管一份跨存档落盘文件。
 //
 // 为什么不用 JSON：本项目编译面里没有 JsonUtility，而 Newtonsoft 反序列化进 private 嵌套类需要
-// 公开构造。落盘内容只有三个整数，用最朴素的 key=value 文本最省事、零依赖。
+// 公开构造。落盘内容只有几个整数，用最朴素的 key=value 文本最省事、零依赖。
 //
 // 值域与默认值刻意与原 ModConfig 条目完全一致（12 / 400 / 120，区间 0..60 / 80..2000 / 10..600），
 // 保证从旧版升级过来的玩家手感不变；每日请求上限仍以 0 表示关闭 AI 发言。
@@ -184,7 +184,11 @@ internal static class SpeechSettings
             string text = "# Probablytalk speech settings\n"
                 + "dailyCap=" + _data.dailyCap + "\n"
                 + "lineLength=" + _data.lineLength + "\n"
-                + "timeoutSeconds=" + _data.timeoutSeconds + "\n";
+                + "timeoutSeconds=" + _data.timeoutSeconds + "\n"
+                + "bargainMin=" + _data.bargainMin + "\n"
+                + "bargainMax=" + _data.bargainMax + "\n"
+                + "bargainCumulative=" + _data.bargainCumulative + "\n"
+                + "bargainRounds=" + _data.bargainRounds + "\n";
             ModHelper.WriteModDataFileText(_modId, FileName, text);
         }
         catch (Exception)

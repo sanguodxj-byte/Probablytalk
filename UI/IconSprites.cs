@@ -12,6 +12,7 @@ internal static class IconSprites
     private static Sprite _wrench;
     private static Sprite _menu;
     private static Sprite _gear;
+    private static Sprite _notes;
     private static Sprite _spinner;
 
     // API 配置（扳手）
@@ -20,6 +21,8 @@ internal static class IconSprites
     public static Sprite Menu { get { if (_menu == null) _menu = Load("icon_menu.png"); return _menu; } }
     // 设置（齿轮）
     public static Sprite Gear { get { if (_gear == null) _gear = Load("icon_gear.png"); return _gear; } }
+    // 顾客名册（记事本）
+    public static Sprite Notes { get { if (_notes == null) _notes = Load("icon_notes.png"); return _notes; } }
     // API 请求中的旋转指示（圆圈箭头）：同法加载，缺失返回 null
     public static Sprite Spinner { get { if (_spinner == null) _spinner = Load("icon_spinner.png"); return _spinner; } }
 

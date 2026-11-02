@@ -10,7 +10,9 @@ namespace Probablytalk;
 // 设置窗口集：把 mod 的界面入口按用途拆成三个独立窗口（RimTalk 式），由顾客对话窗口左下角三个方形图标按钮分别唤出：
 //   扳手   → API 配置：连接（桌面端/网页地址、P2 密钥、设备码授权）+ 兜底端点（提供商/端点/密钥/模型）
 //   三横线 → 调试：连接诊断（本地/网页/兜底/生效通道/在线态）、最近错误、信息，及「检测 / 刷新」动作
-//   齿轮   → 设置：角色指令、生成节奏（每日上限 / 单句长度 / 超时）
+//   齿轮   → 设置：角色指令 + 生成节奏（每日上限 / 单句长度 / 超时）+ 议价门槛（四项）
+//            —— 原游戏原生「选项」菜单里本 mod 的那一组整体搬到这里，原生菜单不再登记条目
+// （第四个记事本图标开顾客名册，窗口由 CustomerRosterUI 自己承载，不在本文件）
 // 无热键；窗口内容可滚动。
 //
 // 数据写入：文本/枚举项经 Player2Config（底层同一份 ModConfig ConfigEntry），节奏经 SpeechSettings
@@ -437,13 +439,20 @@ internal sealed class SettingsUI : MonoBehaviour
     }
 
     // ================= 设置（齿轮） =================
+    // 游戏原生「选项」菜单里本 mod 的那一组已整体搬进这里：七项滑条、随每日上限灰显的联动、
+    // 以及上限为 0 时的提示横幅，都在这一屏里；原生菜单不再登记任何条目。
+    private readonly List<CustomUIElement> capGated = new List<CustomUIElement>();
+    private CustomUIElement capNote;
+
     public void OpenSettingsWindow()
     {
         if (CustomUIManager.Instance == null) return;
         if (gearWindow != null && gearWindow.IsAlive) gearWindow.Close();
 
-        CustomUIBuilder b = MakeWindow(GearWindowId, "set_title", "Settings", 540f, 380f, DetachGear);
+        CustomUIBuilder b = MakeWindow(GearWindowId, "set_title", "Settings", 540f, 460f, DetachGear);
         gearWindow = b.GetWindow();
+        capGated.Clear();
+        capNote = null;
 
         // 提示词
         SectionHeader(b, "section_prompt", "Role Instruction", "sec_prompt");
@@ -459,23 +468,75 @@ internal sealed class SettingsUI : MonoBehaviour
         promptInput.SetPreferredSize(-1f, 90f);
         b.AddSpace(12f);
 
-        // 其他配置项
-        SectionHeader(b, "section_speech", "Configuration", "sec_speech");
-        LabeledSlider(b, "opt_cap_label", "Daily Request Cap",
-            0f, 60f, SpeechSettings.DailyRequestCap, true,
-            v => SpeechSettings.DailyRequestCap = Mathf.RoundToInt(v), "cap");
-        LabeledSlider(b, "opt_linelen_label", "Line Length Cap",
-            80f, 2000f, SpeechSettings.LineLength, true,
-            v => SpeechSettings.LineLength = Mathf.RoundToInt(v), "linelen");
-        LabeledSlider(b, "opt_timeout_label", "Request Timeout (s)",
-            10f, 600f, SpeechSettings.TimeoutSeconds, true,
-            v => SpeechSettings.TimeoutSeconds = Mathf.RoundToInt(v), "timeout");
+        // 生成节奏
+        SectionHeader(b, "section_speech", "Speech Pacing", "sec_speech");
+        LabeledSlider(b, "opt_cap_label", "Daily Request Cap", "opt_cap_tooltip", "Max AI speech requests per in-game day. 0 turns AI speech off.",
+            0f, 60f, SpeechSettings.DailyRequestCap,
+            v => { SpeechSettings.DailyRequestCap = Mathf.RoundToInt(v); ApplyCapGate(); }, "cap");
+        Gate(LabeledSlider(b, "opt_linelen_label", "Line Length Cap", "opt_linelen_tooltip", "Max characters kept from a single AI line.",
+            80f, 2000f, SpeechSettings.LineLength,
+            v => SpeechSettings.LineLength = Mathf.RoundToInt(v), "linelen"));
+        Gate(LabeledSlider(b, "opt_timeout_label", "Request Timeout (s)", "opt_timeout_tooltip", "Per-request timeout in seconds.",
+            10f, 600f, SpeechSettings.TimeoutSeconds,
+            v => SpeechSettings.TimeoutSeconds = Mathf.RoundToInt(v), "timeout"));
+
+        // 上限为 0 的提示横幅：紧跟生成节奏一组，默认藏起来，由 ApplyCapGate 现算现显
+        b.BeginRow(4f, TextAnchor.MiddleLeft);
+        b.AddLabel(string.Empty, "cap_note");
+        capNote = b.Last;
+        capNote.SetFlexible(1f, 0f);
+        b.End();
+        b.AddSpace(10f);
+
+        // 议价门槛：提示词里下发的数字与这里同一份设置，模型看到的上下限就是真正生效的
+        SectionHeader(b, "section_bargain", "Bargain Limits", "sec_bargain");
+        LabeledSlider(b, "opt_bargain_min_label", "Bargain Min Percent", "opt_bargain_min_tooltip", "Lower bound of one bargain step.",
+            1f, 50f, SpeechSettings.BargainMinPercent,
+            v => SpeechSettings.BargainMinPercent = Mathf.RoundToInt(v), "bargain_min");
+        LabeledSlider(b, "opt_bargain_max_label", "Bargain Max Percent", "opt_bargain_max_tooltip", "Upper bound of one bargain step.",
+            5f, 90f, SpeechSettings.BargainMaxPercent,
+            v => SpeechSettings.BargainMaxPercent = Mathf.RoundToInt(v), "bargain_max");
+        LabeledSlider(b, "opt_bargain_cum_label", "Total Bargain Cap", "opt_bargain_cum_tooltip", "Total movement allowed for one customer.",
+            5f, 90f, SpeechSettings.BargainMaxCumulative,
+            v => SpeechSettings.BargainMaxCumulative = Mathf.RoundToInt(v), "bargain_cum");
+        LabeledSlider(b, "opt_bargain_rounds_label", "Bargain Rounds", "opt_bargain_rounds_tooltip", "Bargain rounds one customer allows per day.",
+            1f, 5f, SpeechSettings.BargainMaxRounds,
+            v => SpeechSettings.BargainMaxRounds = Mathf.RoundToInt(v), "bargain_rounds");
 
         b.End();
         CloseRow(b, CloseGear);
         b.Center();
         b.Show();
+        ApplyCapGate();
         CustomUIBuilder.RebuildLayout(gearWindow.ContentRoot);
+    }
+
+    private void Gate(CustomUIElement element)
+    {
+        if (element != null) capGated.Add(element);
+    }
+
+    // 每日上限=0 等价于关闭 AI 发言：单句长度与超时这时没有对象可作用，灰掉比留着更诚实；
+    // 上限滑条自己不能被关掉
+    private void ApplyCapGate()
+    {
+        bool on = SpeechSettings.DailyRequestCap > 0;
+        foreach (CustomUIElement element in capGated) element?.SetInteractable(on);
+        capNote?.SetText(on ? string.Empty : Loc("group_speech_note", "Daily request cap is 0: no AI speech is requested."));
+    }
+
+    private CustomUIElement LabeledSlider(CustomUIBuilder b, string labelKey, string labelFallback,
+        string tipKey, string tipFallback, float min, float max, float initial, Action<float> onChanged, string id)
+    {
+        b.BeginRow(4f, TextAnchor.MiddleLeft);
+        b.AddLabel(Loc(labelKey, labelFallback), "lbl_" + id);
+        b.AddFlexibleSpace();
+        b.AddSlider(min, max, initial, onChanged, true, id);
+        CustomUIElement slider = b.Last;
+        slider.SetFixedWidth(280f);
+        slider.SetTooltip(Loc(tipKey, tipFallback) + "  [" + Mathf.RoundToInt(min) + "-" + Mathf.RoundToInt(max) + "]");
+        b.End();
+        return slider;
     }
 
     // ================= 构建辅助 =================
@@ -506,17 +567,6 @@ internal sealed class SettingsUI : MonoBehaviour
         b.AddButton(Loc("btn_close", "Close"), onClose, "set_close");
         b.Last.SetFixedWidth(180f);
         b.AddFlexibleSpace();
-        b.End();
-    }
-
-    private void LabeledSlider(CustomUIBuilder b, string labelKey, string labelFallback,
-        float min, float max, float initial, bool wholeNumbers, Action<float> onChanged, string id)
-    {
-        b.BeginRow(4f, TextAnchor.MiddleLeft);
-        b.AddLabel(Loc(labelKey, labelFallback), "lbl_" + id);
-        b.AddFlexibleSpace();
-        b.AddSlider(min, max, initial, onChanged, wholeNumbers, id);
-        b.Last.SetFixedWidth(280f);
         b.End();
     }
 

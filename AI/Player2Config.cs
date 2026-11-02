@@ -13,7 +13,8 @@ namespace Probablytalk;
 //                · 网页授权 P2 Key（连接窗口设备码授权成功回写，也可手工粘贴）
 //   Fallback —— 自备 OpenAI 兼容端点（提供商预设 / 端点 / 密钥 / 模型），两条通道都不可达时兜底
 //   Prompt   —— 角色指令（默认内置，可覆盖）
-// 生成节奏（每日上限 / 单句长度 / 超时）是数值滑条，已迁到游戏原生「选项」菜单，见 SpeechSettings + SpeechOptions。
+// 生成节奏与议价门槛（每日上限 / 单句长度 / 超时 + 议价四项）是数值滑条，
+// 已收进模组自己的齿轮设置窗口，见 SpeechSettings + SettingsUI.OpenSettingsWindow。
 // 连接窗口由顾客对话窗口里的「设置」按钮唤出（无热键）。
 //
 // 分组名由 ModConfigWindow 当原始文本渲染、不做本地化查表，因此固定用英文中性词；

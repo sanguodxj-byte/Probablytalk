@@ -8,7 +8,7 @@ using UnityEngine.UI;
 namespace Probablytalk;
 
 // 顾客对话：柜台"对话"按钮（原版遣散按钮的镜像位，同绘制逻辑）→ 输入行 → AI 回复走原版气泡。
-// 无右键交互；本模组 UI 为对话窗口 + 左下角三个方形图标入口（扳手=API 配置 / 三横线=调试 / 齿轮=设置）。
+// 无右键交互；本模组 UI 为对话窗口 + 左下角四个方形图标入口（扳手=API 配置 / 三横线=调试 / 齿轮=设置 / 记事本=顾客名册）。
 internal sealed class CustomerChatUI : MonoBehaviour
 {
     private const string WindowId = "probablytalk_customer";
@@ -23,6 +23,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
     private CustomUIElement apiButton;
     private CustomUIElement debugButton;
     private CustomUIElement gearButton;
+    private CustomUIElement rosterButton;
     private StoreClient boundClient;
 
     // 图标按钮的初始方形边长；实际由 SyncSendButtonHeight 同步为与输入框等高（正方形）
@@ -127,6 +128,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
         apiButton?.SetPreferredSize(height, height);
         debugButton?.SetPreferredSize(height, height);
         gearButton?.SetPreferredSize(height, height);
+        rosterButton?.SetPreferredSize(height, height);
         CustomUIBuilder.RebuildLayout(window.ContentRoot);
         PlaceSpinner();
         syncSendHeight = false;
@@ -196,13 +198,14 @@ internal sealed class CustomerChatUI : MonoBehaviour
         sendButton.SetPreferredSize(96f, 0f);
         builder.End();
 
-        // 三个方形图标入口，置于输入框左下角（同一对话框容器内，不外挂），左对齐：
-        //   扳手 = API 配置 / 三横线 = 调试 / 齿轮 = 设置；均带悬浮说明
+        // 四个方形图标入口，置于输入框左下角（同一对话框容器内，不外挂），左对齐：
+        //   扳手 = API 配置 / 三横线 = 调试 / 齿轮 = 设置 / 记事本 = 顾客名册；均带悬浮说明
         builder.AddSpace(6f);
         builder.BeginRow(6f, TextAnchor.MiddleLeft);
         apiButton = AddIconEntry(builder, IconSprites.Wrench, "entry_api", "tooltip_api", "API Configuration", OpenApiSettings);
         debugButton = AddIconEntry(builder, IconSprites.Menu, "entry_debug", "tooltip_debug", "Debug", OpenDebugSettings);
         gearButton = AddIconEntry(builder, IconSprites.Gear, "entry_settings", "tooltip_settings", "Settings", OpenGearSettings);
+        rosterButton = AddIconEntry(builder, IconSprites.Notes, "entry_roster", "tooltip_roster", "Customer Roster", OpenRoster);
         builder.AddFlexibleSpace();
         builder.End();
 
@@ -230,6 +233,13 @@ internal sealed class CustomerChatUI : MonoBehaviour
     private void OpenApiSettings() { OpenEntry(SettingsUI.Instance, 0); }
     private void OpenDebugSettings() { OpenEntry(SettingsUI.Instance, 1); }
     private void OpenGearSettings() { OpenEntry(SettingsUI.Instance, 2); }
+
+    // 名册：两个窗口都是 modal 纸面板，同时开着会把世界点击锁死，所以先收掉输入窗再开名册
+    private void OpenRoster()
+    {
+        if (window != null && window.IsAlive) CloseWindow();
+        CustomerRosterUI.Toggle(modId);
+    }
 
     private void OpenEntry(SettingsUI settings, int which)
     {
@@ -476,6 +486,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
         apiButton = null;
         debugButton = null;
         gearButton = null;
+        rosterButton = null;
         spinner = null;
         syncSendHeight = false;
     }

@@ -34,9 +34,9 @@ public class ModEntry : IMod
         RegularManager.Setup(manifest.ID, log);
         CustomerArchive.Setup(manifest.ID, client, log);
         CreditBook.Setup(manifest.ID, log);
-        // 生成节奏设置：载入持久化值并登记到游戏「选项」菜单（本地化分组标题 + 反应式联动）
+        // 生成节奏设置：载入持久化值；界面承载在模组的齿轮设置窗口（见 SettingsUI），
+        // 不再登记进游戏原生「选项」菜单
         SpeechSettings.Load(manifest.ID);
-        SpeechOptions.Register(manifest.ID);
         // 连接通道：创建授权器（网页设备码流按需启动，由顾客对话窗口的「设置」按钮触发）
         auth = new Player2Auth(log);
         log.Log("Init");
@@ -74,7 +74,6 @@ public class ModEntry : IMod
         ModHook.OnGenerateCustomerVeryLate -= OnGenerateCustomerVeryLate;
         ModHook.OnShutterClosedLate -= RegularManager.OnShutterClosedLate;
         ModHook.OnShutterOpenedLate -= OnShutterOpenedLate;
-        SpeechOptions.Unregister();
         auth?.Dispose();
         auth = null;
         RegularManager.Shutdown();

@@ -8,7 +8,7 @@ namespace Probablytalk;
 // 顾客名册：列出本存档里所有产生过对话的顾客（名字 / 势力 / 最近到访日 / 谈过几次 / 成交几次 / 离店总结）。
 // 数据来自 CustomerArchive，落的是 PlayerStore 的 per-save modData，因此天然是存档级：
 // 换存档即换名单，新档即空名单。
-// 入口挂在游戏原生「选项」界面末尾（见 ArchivePatches），点一行展开单人档案：总结、态度与本次往来。
+// 入口是顾客对话窗口图标行的记事本按钮（见 CustomerChatUI.OpenRoster），点一行展开单人档案：总结、态度与本次往来。
 internal static class CustomerRosterUI
 {
     private const string WindowId = "probablytalk_roster";
@@ -18,30 +18,6 @@ internal static class CustomerRosterUI
 
     private static CustomUIWindow _window;
     private static CustomUIWindow _detail;
-
-    // 选项界面里的入口按钮：已挂过一次就不再重复挂（窗口重开时元素会重建）
-    internal static void AttachToOptionsWindow(CustomUIWindow window, string modId)
-    {
-        try
-        {
-            if (window == null || !window.IsAlive || CustomUIManager.Instance == null) return;
-            if (window.Get("roster_open") != null) return;
-            CustomUIBuilder builder = new CustomUIBuilder(CustomUIManager.Instance, window);
-            builder.AddSpace(10f);
-            builder.AddSpace(2f);
-            builder.BeginRow(4f, TextAnchor.MiddleLeft);
-            builder.AddHeader(Loc(modId, "roster_section", "Talk Records"), "roster_header");
-            builder.End();
-            int count = CustomerArchive.Roster().Count;
-            builder.AddButton(Loc(modId, "roster_open", "Customer Roster") + "  (" + count + ")", () => Toggle(modId), "roster_open");
-            builder.Last.SetPreferredSize(320f, 0f);
-            CustomUIBuilder.RebuildLayout(window.ContentRoot);
-        }
-        catch (Exception ex)
-        {
-            if (ModEntry.Log != null) ModEntry.Log.Warning("roster entry failed: " + ex.Message);
-        }
-    }
 
     internal static void Toggle(string modId)
     {
