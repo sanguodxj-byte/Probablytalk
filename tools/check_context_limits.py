@@ -63,6 +63,20 @@ RULES = [
         "丢弃历史（丢最旧、跳过、截取）",
         re.compile(r"\.RemoveAt\s*\(\s*0\s*\)|\.RemoveRange\s*\(\s*0\b|\.Skip\s*\(|\.Take\s*\(|丢最旧|丢弃最旧"),
     ),
+    (
+        "private-channel",
+        "玩家面板专属字段进入上下文（顾客看不到这些数字）",
+        # 只认「字段访问」的形状，不认裸词：注释里提到 order/traffic 不该报错。
+        # 判据来自反编译：这些字段只被玩家 UI/难度/后台逻辑读，没有任何顾客侧代码读它们。
+        # 反过来，garbageLevel（游戏用它罚顾客态度）、isPowerOn、事件与招牌是可见的，不在黑名单
+        re.compile(
+            r"\bstation\.(order|traffic|happiness|todayGutterflowPurity|todayRustwaterPurity)\b"
+            r"|\bstore\.(retailMarkup|contrabandMarkup\w*|dealMakerBargainBonus|rentValue|loanValue"
+            r"|dayUntilRent|dayUntilLoan|storeReputations|playerCash|appraiserLevel|appraisalProgress"
+            r"|vendingMislabel\w*|requestMislabel\w*|lastInspectionLossValue|lastTheftValue)\b"
+            r"|\bclient\.(tradeReputationMultiplier|buyTradeRepMultiplierOverride|sellTradeRepMultiplierOverride)\b"
+        ),
+    ),
 ]
 
 COUNT_GUARD = re.compile(r"\.Count\s*(<=|>=|<|>)\s*(\d+)")
@@ -176,6 +190,12 @@ FIXTURES_DIRTY = {
         "while (turns.Count > 24) turns.RemoveAt(0);",
         "var tail = lines.Skip(2);",
     ],
+    "private-channel": [
+        'shop["order"] = station.order;',
+        'policy["retailMarkup"] = store.retailMarkup;',
+        'body["tradeRepMultiplier"] = Math.Round(client.tradeReputationMultiplier, 2);',
+        'shop["cash"] = store.playerCash;',
+    ],
 }
 
 # 干净样例：空判、全量下发、按键名切分、以及注释里提到禁用词——都不该报
@@ -195,6 +215,10 @@ FIXTURES_CLEAN = [
     "private const int MaxActiveRegulars = 4;",
     "shop[\"budget\"] = client.GetBudget();",
     "public int PromptTokens { get; set; }",
+    # 看得见的环境量：垃圾（游戏用它罚顾客态度）、停电、招牌，都不是玩家后台字段
+    "if (store.garbageLevel > 0) shop[\"garbage\"] = store.garbageLevel;",
+    "if (!store.isPowerOn) shop[\"powerOut\"] = true;",
+    "if (!string.IsNullOrWhiteSpace(store.storeName)) shop[\"storeName\"] = store.storeName;",
 ]
 
 
@@ -243,10 +267,11 @@ def main():
         print("上下文通路文件 %d 个，豁免 %d 条（豁免理由见脚本内表）" % (len(SCOPE), exempt_count))
 
     if violations:
-        print("发现进入模型的内容被设了上限：")
+        print("上下文通路违规（容量上限 / 玩家后台字段）：")
         for v in violations:
             print("  - " + v)
-        print("按规范删掉上限，长度口径写进提示词；确属豁免就改 EXEMPT 表并写理由。")
+        print("按规范改：内容一律全量下发、长度口径写进提示词；"
+              "玩家面板专属字段不许进上下文。确属豁免就改 EXEMPT 表并写理由。")
         return 1
     if gaps:
         return 2

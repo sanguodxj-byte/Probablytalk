@@ -27,16 +27,18 @@ internal static class ContextBrief
         return string.Join("\n", lines);
     }
 
+    // 店况只渲染他看得见的那部分：天数、招牌、垃圾堆、停电与当日事件。
+    // 秩序/客流/满意度、蓄水罐纯度、加价政策、租金贷款与势力好感已随上下文一起撤下——
+    // 那些只在玩家面板上呈现，他看不到数字，只看得到已经含加价的标价和眼前的环境
     private static void AddShop(List<string> lines, JObject shop)
     {
         if (shop == null) return;
 
         var stats = new StringBuilder("Day: ").Append(Int(shop, "day"));
-        if (shop["order"] != null) stats.Append(" | order ").Append(Int(shop, "order"));
-        if (shop["traffic"] != null) stats.Append(" | traffic ").Append(Int(shop, "traffic"));
-        if (shop["happiness"] != null) stats.Append(" | happiness ").Append(Int(shop, "happiness"));
-        if (shop["gutterwater"] != null) stats.Append(" | gutter water ").Append(Dec(shop, "gutterwater")).Append("%");
-        if (shop["rustwater"] != null) stats.Append(" | rust water ").Append(Dec(shop, "rustwater")).Append("%");
+        string storeName = Str(shop, "storeName");
+        if (!string.IsNullOrWhiteSpace(storeName)) stats.Append(" | at ").Append(storeName);
+        if (shop["garbage"] != null) stats.Append(" | garbage piled ").Append(Int(shop, "garbage"));
+        if (Bool(shop, "powerOut")) stats.Append(" | power out");
         lines.Add(stats.ToString());
 
         JArray events = shop["events"] as JArray;
@@ -57,55 +59,6 @@ internal static class ContextBrief
                 parts.Add(text.ToString());
             }
             if (parts.Count > 0) lines.Add("Events: " + string.Join("；", parts));
-        }
-
-        JObject finance = shop["finance"] as JObject;
-        var money = new List<string>();
-        string storeName = Str(shop, "storeName");
-        if (!string.IsNullOrWhiteSpace(storeName)) money.Add("store " + storeName);
-        if (finance != null)
-        {
-            if (finance["rent"] != null)
-            {
-                var rent = new StringBuilder("rent ").Append(Int(finance, "rent"));
-                if (finance["rentDueIn"] != null) rent.Append(" due in ").Append(Int(finance, "rentDueIn")).Append("d");
-                money.Add(rent.ToString());
-            }
-            if (finance["loan"] != null)
-            {
-                var loan = new StringBuilder("loan ").Append(Int(finance, "loan"));
-                if (finance["loanDueIn"] != null) loan.Append(" due in ").Append(Int(finance, "loanDueIn")).Append("d");
-                money.Add(loan.ToString());
-            }
-        }
-        if (money.Count > 0) lines.Add("Store: " + string.Join(" | ", money));
-
-        JObject policy = shop["policy"] as JObject;
-        if (policy != null)
-        {
-            var parts = new List<string>
-            {
-                "retail markup " + Int(policy, "retailMarkup") + "%",
-                "contraband " + Int(policy, "contrabandLow") + "/" + Int(policy, "contrabandMid") + "/"
-                    + Int(policy, "contrabandHigh") + "%",
-            };
-            if (policy["garbage"] != null) parts.Add("garbage " + Int(policy, "garbage"));
-            if (Bool(policy, "powerOff")) parts.Add("power off");
-            if (policy["dealMakerBonus"] != null) parts.Add("deal-maker +" + Int(policy, "dealMakerBonus"));
-            lines.Add("Policy: " + string.Join(" | ", parts));
-        }
-
-        JArray reputation = shop["reputation"] as JArray;
-        if (reputation != null && reputation.Count > 0)
-        {
-            var parts = new List<string>();
-            foreach (JToken token in reputation)
-            {
-                JObject rep = token as JObject;
-                if (rep == null) continue;
-                parts.Add(Str(rep, "faction") + " " + Int(rep, "strength"));
-            }
-            if (parts.Count > 0) lines.Add("Reputation: " + string.Join(" | ", parts));
         }
     }
 
@@ -255,11 +208,6 @@ internal static class ContextBrief
             string state = Str(hireling, "state");
             if (!string.IsNullOrWhiteSpace(state)) text.Append(" | ").Append(state);
             lines.Add(text.ToString());
-        }
-
-        if (client["tradeRepMultiplier"] != null)
-        {
-            lines.Add("Trade rep multiplier: x" + Dec(client, "tradeRepMultiplier"));
         }
 
         string archetype = Str(client, "archetype");
@@ -475,13 +423,6 @@ internal static class ContextBrief
     {
         if (obj == null) return 0;
         int? value = obj.Value<int?>(key);
-        return value ?? 0;
-    }
-
-    private static double Dec(JObject obj, string key)
-    {
-        if (obj == null) return 0;
-        double? value = obj.Value<double?>(key);
         return value ?? 0;
     }
 

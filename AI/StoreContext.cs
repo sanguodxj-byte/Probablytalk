@@ -33,24 +33,29 @@ internal static class StoreContext
     }
 
     // 商店面：天数、客流/秩序/满意度与当日特殊事件（缺水、停电、种子短缺等都由 StoreEventManager 提供）
+    // 商店面：只放他看得见的那部分——天数、当日事件（新闻与街上都看得到）、店名招牌、
+    // 垃圾堆与停电（垃圾同时被游戏用来罚顾客态度：PlayerStore.GetTrashAttPenalty）。
+    // 撤掉的：order/traffic/happiness（全程序集无人读，order 只被难度预设用，
+    // traffic/happiness 连读取方都没有，是玩家 UI 上的抽象数字）、两个蓄水罐纯度
+    // （掺水是玩家在后台干的，他只能通过手上那瓶水的标签与验货能力察觉）、
+    // 零售与违禁品加价百分比、deal-maker 加成、租金贷款到期、势力好感数值——
+    // 这些只在玩家面板上呈现，顾客一概看不到；他看到的是已经含加价的标价，不是加价率。
     private static void AddShop(JObject context, int day)
     {
         JObject shop = new JObject { ["day"] = day };
         StoreStation station = StoreStation.Instance;
         if (station != null)
         {
-            shop["order"] = station.order;
-            shop["traffic"] = station.traffic;
-            shop["happiness"] = station.happiness;
             JArray events = ActiveEvents(station);
             if (events.Count > 0) shop["events"] = events;
-            // 水质是掺水骗局的核心数值：两个蓄水罐的纯度都按万分比存
-            shop["gutterwater"] = Math.Round(station.todayGutterflowPurity / 100f, 1);
-            shop["rustwater"] = Math.Round(station.todayRustwaterPurity / 100f, 1);
         }
-        AddPolicy(shop);
-        AddFinance(shop);
-        AddReputation(shop);
+        PlayerStore store = PlayerStore.Instance;
+        if (store != null)
+        {
+            if (!string.IsNullOrWhiteSpace(store.storeName)) shop["storeName"] = store.storeName;
+            if (store.garbageLevel > 0) shop["garbage"] = store.garbageLevel;
+            if (!store.isPowerOn) shop["powerOut"] = true;
+        }
         context["shop"] = shop;
     }
 
@@ -155,7 +160,6 @@ internal static class StoreContext
         AddAug(body, client);
         AddAttraction(body, client);
         AddOrders(body, client);
-        body["tradeRepMultiplier"] = Math.Round(client.tradeReputationMultiplier, 2);
         ClientInsight.Append(body, client);
         context["client"] = body;
     }
@@ -378,7 +382,8 @@ internal static class StoreContext
             if (string.IsNullOrWhiteSpace(display)) continue;
             JObject row = new JObject { ["text"] = display.Trim() };
             if (exposed) row["exposed"] = true;
-            if (feature.fakeCondition != null) row["fake"] = true;
+            // 标签是伪造的这件事，只有被当场验穿之后他才可能知道；没验穿就别说破
+            if (exposed && feature.fakeCondition != null) row["fake"] = true;
             list.Add(row);
         }
         return list;
@@ -496,53 +501,8 @@ internal static class StoreContext
         }
     }
 
-    // 价格政策与店况：零售加价、违禁品加价档、垃圾堆、供电、谈判加成
-    private static void AddPolicy(JObject shop)
-    {
-        PlayerStore store = PlayerStore.Instance;
-        if (store == null) return;
-        JObject policy = new JObject
-        {
-            ["retailMarkup"] = store.retailMarkup,
-            ["contrabandLow"] = store.contrabandMarkupLow,
-            ["contrabandMid"] = store.contrabandMarkupMid,
-            ["contrabandHigh"] = store.contrabandMarkupHigh,
-        };
-        if (store.garbageLevel > 0) policy["garbage"] = store.garbageLevel;
-        if (!store.isPowerOn) policy["powerOff"] = true;
-        if (store.dealMakerBargainBonus > 0) policy["dealMakerBonus"] = store.dealMakerBargainBonus;
-        shop["policy"] = policy;
-    }
-
-    // 财务：店名、租金与贷款到期
-    private static void AddFinance(JObject shop)
-    {
-        PlayerStore store = PlayerStore.Instance;
-        if (store == null) return;
-        if (!string.IsNullOrWhiteSpace(store.storeName)) shop["storeName"] = store.storeName;
-        JObject finance = new JObject();
-        if (store.rentValue > 0) finance["rent"] = store.rentValue;
-        if (store.dayUntilRent > 0) finance["rentDueIn"] = store.dayUntilRent;
-        if (store.loanValue > 0) finance["loan"] = store.loanValue;
-        if (store.dayUntilLoan > 0) finance["loanDueIn"] = store.dayUntilLoan;
-        if (finance.Count > 0) shop["finance"] = finance;
-    }
-
-    // 声望：按势力的好感度，只取有值的几条
-    private static void AddReputation(JObject shop)
-    {
-        PlayerStore store = PlayerStore.Instance;
-        if (store == null || store.storeReputations == null) return;
-        JArray list = new JArray();
-        foreach (StoreReputation rep in store.storeReputations)
-        {
-            if (rep == null) continue;
-            string name = !string.IsNullOrWhiteSpace(rep.factionDisplay) ? rep.factionDisplay : rep.factionId;
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            list.Add(new JObject { ["faction"] = name, ["strength"] = rep.strength });
-        }
-        if (list.Count > 0) shop["reputation"] = list;
-    }
+    // 价格政策、账本与势力好感已整体撤下：那些是玩家面板上的数字，顾客看不到。
+    // 他能看到的是已经含加价的标价、看得见的垃圾与停电，都在 AddShop / CountedItems 里。
 
 
     private static void AddList(JObject parent, string name, List<string> items)
