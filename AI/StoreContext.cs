@@ -227,26 +227,20 @@ internal static class StoreContext
         context["deal"] = deal;
     }
 
-    // 议价与赊账的本轮状态：模型据此知道还能不能再压、这单能挂多少账，
-    // 不必每轮试探到被游戏拒绝才停下
+    // 议价与赊账的本轮**事实**：方向、已经谈了几轮、已经让/加过多少、欠多少、这家店肯让他赊多少。
+    // 幅度与轮次的上限不在这里——那是提示词单方面下发的规矩（PromptBook.InteractiveFormat），
+    // 同一个数字写两处，改一处就自相矛盾
     private static JObject Negotiation(StoreClient client)
     {
         string identifier = client != null ? client.identifier : null;
         // 方向决定哪两个 kind 合法：顾客买你的货 = 你让利/提价；顾客卖给你 = 你加价收/压价收。
         // 模型据此选 kind，写错方向会被 BargainBridge 直接丢弃
-        string direction = BargainBridge.DirectionOf(client);
-        // 前半是事实（游戏方向、已发生的轮次与幅度），后半是给模型遵守的规矩：
-        // 代码不夹取、不拦截、不纠正，全部由模型自己守住这些数字
         JObject negotiation = new JObject
         {
-            ["direction"] = direction,
+            ["direction"] = BargainBridge.DirectionOf(client),
             ["roundsUsed"] = BargainBridge.RoundsUsed(identifier),
-            ["roundsMax"] = BargainBridge.MaxRoundsPerClient,
             ["discountApplied"] = BargainBridge.DiscountSoFar(identifier),
             ["markupApplied"] = BargainBridge.MarkupSoFar(identifier),
-            ["minPercent"] = BargainBridge.MinPercent,
-            ["maxPercent"] = BargainBridge.MaxPercent,
-            ["maxCumulative"] = BargainBridge.MaxCumulativePercent,
         };
         int debt = CreditBook.DebtOf(identifier);
         if (debt > 0)

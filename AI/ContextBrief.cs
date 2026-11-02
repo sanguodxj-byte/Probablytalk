@@ -356,14 +356,13 @@ internal static class ContextBrief
         JObject negotiation = deal["negotiation"] as JObject;
         if (negotiation == null) return;
 
+        // 只报已发生的事实；幅度上下限、累计上限、可谈轮数由提示词单方面给出，这里不再重复一遍
         var line = new StringBuilder("Negotiation: ");
         string direction = DirectionText(Str(negotiation, "direction"));
         if (!string.IsNullOrWhiteSpace(direction)) line.Append(direction).Append(" | ");
-        line.Append("rounds ").Append(Int(negotiation, "roundsUsed")).Append("/").Append(Int(negotiation, "roundsMax"));
-        line.Append(" | discount ").Append(Int(negotiation, "discountApplied")).Append("%");
-        line.Append(" | markup ").Append(Int(negotiation, "markupApplied")).Append("%");
-        line.Append(" | percent ").Append(Int(negotiation, "minPercent")).Append("-").Append(Int(negotiation, "maxPercent"));
-        line.Append(" | total cap ").Append(Int(negotiation, "maxCumulative")).Append("%");
+        line.Append("rounds used ").Append(Int(negotiation, "roundsUsed"));
+        line.Append(" | discount given ").Append(Int(negotiation, "discountApplied")).Append("%");
+        line.Append(" | markup pushed ").Append(Int(negotiation, "markupApplied")).Append("%");
         lines.Add(line.ToString());
 
         if (negotiation["owes"] != null || negotiation["creditLine"] != null)
