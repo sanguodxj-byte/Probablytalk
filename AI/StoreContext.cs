@@ -5,29 +5,18 @@ using Newtonsoft.Json.Linq;
 namespace Probablytalk;
 
 // 顾客上下文分区：商店面（当日事件与客流）→ 顾客本体 → 顾客自带货物 → 柜台与展示 → 当次交易。
-// 只读游戏状态，不写任何数值字段；每区都带条数上限，避免上下文随货架规模膨胀。
-// 发言包预生成与柜台交互对话共用同一份结构；多轮往来由 messages 承载，不再复制进上下文。
+// 只读游戏状态，不写任何数值字段；各区一律全量下发，不设条数与体积上限
+// （静默裁剪让模型不知道自己缺了什么，只能编；体积代价交给调试面板的 token 观测）。
 internal static class StoreContext
 {
-    // 分区条数上限：够模型点题即可，超出只截断不报错
-    private const int MaxCounterItems = 12;
-    private const int MaxShowcaseItems = 8;
-    private const int MaxClientItems = 10;
-    private const int MaxEvents = 4;
-    private const int MaxEventNoteLength = 160;
-    private const int MaxOriginalLineLength = 400;
-    private const int MaxRecentLines = 3;
-
-    // 上下文预算：按序列化字符数封顶（中文按字计，4500 字约 2-3k token）。
-    // 超预算时按「越外围越先砍」的顺序丢区，persona / 意图 / 价格 / 欠账这些必需项永远保住
-    private const int MaxContextChars = 4500;
-
     internal static JObject Build(StoreClient client, int day)
     {
         return Build(client, day, null);
     }
 
-    internal static JObject Build(StoreClient client, int day, IReadOnlyList<KeyValuePair<string, string>> turns)
+    // transcript 只给没有 messages 通道的调用方（离店总结）：柜台交互的往来记录已作为 messages
+    // 逐条发出，再复制一份进上下文就是把同一段对话计费两次
+    internal static JObject Build(StoreClient client, int day, IReadOnlyList<KeyValuePair<string, string>> transcript)
     {
         JObject context = new JObject();
         AddShop(context, day);
@@ -35,14 +24,11 @@ internal static class StoreContext
         // 性格必须在发请求之前定型：玩家第一次开口（或熟客预生成）时按类型池 roll 一次，
         // 之后跨天、跨存档都不变。放在这里是因为预生成、柜台对话、离店总结三条路都经过 Build
         CustomerArchive.EnsurePersona(client);
-        AddClient(context, client, turns);
+        AddClient(context, client, transcript);
         AddClientGoods(context);
         AddFront(context);
         AddDeal(context, client);
         RegularManager.AppendSpeechContext(context, client.identifier);
-        // 不把 turns 再写进上下文：多轮对话里它们已经作为 messages 逐条发出，
-        // 复制一份进 system 只是把同一段对话计费两次
-        TrimToBudget(context);
         return context;
     }
 
@@ -83,7 +69,7 @@ internal static class StoreContext
             if (!string.IsNullOrWhiteSpace(name)) entry["name"] = name.Trim();
             if (!string.IsNullOrWhiteSpace(evt.newsDescription))
             {
-                entry["note"] = TextLimit.Truncate(evt.newsDescription.Trim(), MaxEventNoteLength);
+                entry["note"] = evt.newsDescription.Trim();
             }
             if (evt.isLockDown) entry["lockdown"] = true;
             if (evt.isDurationVisible && evt.totalDuration > 0)
@@ -92,13 +78,12 @@ internal static class StoreContext
             }
             if (entry.Count == 0) continue;
             list.Add(entry);
-            if (list.Count >= MaxEvents) break;
         }
         return list;
     }
 
     // 顾客本体：身份、意图、支付能力、买卖偏好、议价态度，以及被本管线覆盖掉的原版台词
-    private static void AddClient(JObject context, StoreClient client, IReadOnlyList<KeyValuePair<string, string>> turns)
+    private static void AddClient(JObject context, StoreClient client, IReadOnlyList<KeyValuePair<string, string>> transcript)
     {
         JObject body = new JObject
         {
@@ -133,7 +118,7 @@ internal static class StoreContext
         }
         if (!string.IsNullOrWhiteSpace(line))
         {
-            body["originalLine"] = TextLimit.Truncate(line.Trim(), MaxOriginalLineLength);
+            body["originalLine"] = line.Trim();
         }
         // 上一次离店的总结回灌：这是「对话影响以后对话」的闭环落点
         string summary, stance;
@@ -162,8 +147,7 @@ internal static class StoreContext
             ["agreeableness"] = ocean.Agreeableness,
             ["neuroticism"] = ocean.Neuroticism,
         };
-        JArray recent = RecentLines(turns);
-        if (recent.Count > 0) body["recentLines"] = recent;
+        AddTranscript(body, transcript);
         AddPriceBias(body, client);
         AddStanding(body, client);
         AddTradeRules(body, client);
@@ -182,7 +166,7 @@ internal static class StoreContext
         if (entry == null) return;
         List<GameItem> items = entry.GetAllNonOwnedItem();
         if (items == null || items.Count == 0) return;
-        context["clientGoods"] = CountedItems(items, MaxClientItems);
+        context["clientGoods"] = CountedItems(items);
     }
 
     // 柜台与招牌：柜台取柜台区全部物品里的玩家自有部分（在售），招牌取展示柜（临街可见的陈列）
@@ -202,12 +186,12 @@ internal static class StoreContext
                 counter.Add(item);
             }
         }
-        if (counter.Count > 0) context["counter"] = CountedItems(counter, MaxCounterItems);
+        if (counter.Count > 0) context["counter"] = CountedItems(counter);
 
         GameGridInventory showcase = entry.showcaseElement;
         if (showcase != null && showcase.childItems != null && showcase.childItems.Count > 0)
         {
-            context["showcase"] = CountedItems(showcase.childItems, MaxShowcaseItems);
+            context["showcase"] = CountedItems(showcase.childItems);
         }
     }
 
@@ -269,7 +253,7 @@ internal static class StoreContext
         JObject barter = new JObject();
         if (!string.IsNullOrWhiteSpace(offer.barterTextBody))
         {
-            barter["text"] = TextLimit.Truncate(offer.barterTextBody.Trim(), MaxEventNoteLength);
+            barter["text"] = offer.barterTextBody.Trim();
         }
         JArray wants = new JArray();
         JArray gives = new JArray();
@@ -287,53 +271,26 @@ internal static class StoreContext
         if (barter.Count > 0) deal["barter"] = barter;
     }
 
-    // 最近几句顾客台词：给模型做「别重复自己」的参照，避免每次都用同一句开场
-    private static JArray RecentLines(IReadOnlyList<KeyValuePair<string, string>> turns)
+    // 往来记录全文：只给不走 messages 的调用（离店总结）用，逐条带角色，不截断
+    private static void AddTranscript(JObject body, IReadOnlyList<KeyValuePair<string, string>> transcript)
     {
+        if (transcript == null || transcript.Count == 0) return;
         JArray lines = new JArray();
-        if (turns == null || turns.Count == 0) return lines;
-        for (int i = turns.Count - 1; i >= 0 && lines.Count < MaxRecentLines; i--)
+        foreach (KeyValuePair<string, string> turn in transcript)
         {
-            if (turns[i].Key == "user" || turns[i].Key == "player") continue;
-            if (string.IsNullOrWhiteSpace(turns[i].Value)) continue;
-            lines.Add(TextLimit.Truncate(turns[i].Value.Trim(), 60));
+            if (string.IsNullOrWhiteSpace(turn.Value)) continue;
+            lines.Add(new JObject
+            {
+                ["role"] = turn.Key,
+                ["text"] = turn.Value.Trim(),
+            });
         }
-        return lines;
-    }
-
-    // 预算裁剪：先砍橱窗与事件这类氛围区，再削货物条数，最后才动对话历史
-    private static void TrimToBudget(JObject context)
-    {
-        if (Size(context) <= MaxContextChars) return;
-        context.Remove("showcase");
-        if (Size(context) <= MaxContextChars) return;
-        Shrink(context, "counter", 6);
-        Shrink(context, "clientGoods", 6);
-        if (Size(context) <= MaxContextChars) return;
-        JObject shop = context["shop"] as JObject;
-        shop?.Remove("events");
-        if (Size(context) <= MaxContextChars) return;
-        Shrink(context, "counter", 4);
-        Shrink(context, "clientGoods", 4);
-        if (Size(context) <= MaxContextChars) return;
-    }
-
-    private static int Size(JObject context)
-    {
-        return context.ToString(Newtonsoft.Json.Formatting.None).Length;
-    }
-
-    private static void Shrink(JObject context, string key, int keep)
-    {
-        JArray array = context[key] as JArray;
-        if (array == null) return;
-        while (array.Count > keep) array.RemoveAt(array.Count - 1);
-        if (array.Count == 0) context.Remove(key);
+        if (lines.Count > 0) body["dialogue"] = lines;
     }
 
     // 同名物品聚成一条并计数：货架上一格一件，逐条平铺会浪费上下文。
     // 每条带单价估值与该物品的可见状态（锈蚀/凹痕/过期…），这是讨价还价时唯一能落到实处的依据
-    private static JArray CountedItems(List<GameItem> items, int max)
+    private static JArray CountedItems(List<GameItem> items)
     {
         List<string> order = new List<string>();
         Dictionary<string, int> counts = new Dictionary<string, int>();
@@ -346,7 +303,6 @@ internal static class StoreContext
             name = name.Trim();
             if (!counts.ContainsKey(name))
             {
-                if (order.Count >= max) continue;
                 order.Add(name);
                 counts[name] = 0;
                 samples[name] = item;
@@ -416,7 +372,6 @@ internal static class StoreContext
             if (exposed) row["exposed"] = true;
             if (feature.fakeCondition != null) row["fake"] = true;
             list.Add(row);
-            if (list.Count >= 3) break;
         }
         return list;
     }
@@ -577,7 +532,6 @@ internal static class StoreContext
             string name = !string.IsNullOrWhiteSpace(rep.factionDisplay) ? rep.factionDisplay : rep.factionId;
             if (string.IsNullOrWhiteSpace(name)) continue;
             list.Add(new JObject { ["faction"] = name, ["strength"] = rep.strength });
-            if (list.Count >= 5) break;
         }
         if (list.Count > 0) shop["reputation"] = list;
     }

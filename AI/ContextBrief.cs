@@ -278,8 +278,7 @@ internal static class ContextBrief
             if (!string.IsNullOrWhiteSpace(nature)) lines.Add("Personality: " + nature);
         }
 
-        string recent = Join(client["recentLines"] as JArray, " / ");
-        if (!string.IsNullOrWhiteSpace(recent)) lines.Add("Recent lines: " + recent);
+        AddDialogue(lines, client["dialogue"] as JArray);
 
         string original = Str(client, "originalLine");
         if (!string.IsNullOrWhiteSpace(original)) lines.Add("Original line: " + original);
@@ -293,6 +292,22 @@ internal static class ContextBrief
             string stance = Str(past, "stance");
             if (!string.IsNullOrWhiteSpace(stance)) visit.Append(" | attitude: ").Append(stance);
             lines.Add(visit.ToString());
+        }
+    }
+
+    // 往来记录：只在这次对话不走 messages 通道时出现（离店总结），逐条带角色、全文不截断
+    private static void AddDialogue(List<string> lines, JArray dialogue)
+    {
+        if (dialogue == null || dialogue.Count == 0) return;
+        lines.Add("Dialogue:");
+        foreach (JToken token in dialogue)
+        {
+            JObject turn = token as JObject;
+            if (turn == null) continue;
+            string text = Str(turn, "text");
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            string role = Str(turn, "role");
+            lines.Add("- " + (string.IsNullOrWhiteSpace(role) ? "?" : role) + ": " + text);
         }
     }
 

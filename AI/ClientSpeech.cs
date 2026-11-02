@@ -310,10 +310,10 @@ internal static class ClientSpeech
 
     internal static int InteractiveLineLength => LineLength;
 
-    // 交互对话上下文 = 分区上下文 + 本顾客的往来历史（turns 由对话界面维护）
-    internal static string InteractiveContext(StoreClient client, IReadOnlyList<KeyValuePair<string, string>> turns)
+    // 交互对话上下文 = 分区上下文：往来记录已经作为 messages 逐条发出，不在这里复制第二份
+    internal static string InteractiveContext(StoreClient client)
     {
-        return ContextBrief.Render(StoreContext.Build(client, CurrentDay(), turns), "玩家在柜台后跟他说话。");
+        return ContextBrief.Render(StoreContext.Build(client, CurrentDay()), "玩家在柜台后跟他说话。");
     }
 
     // 顾客资格：只有来买卖的才算；通缉客与剧情拜访不算

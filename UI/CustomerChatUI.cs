@@ -12,7 +12,6 @@ namespace Probablytalk;
 internal sealed class CustomerChatUI : MonoBehaviour
 {
     private const string WindowId = "probablytalk_customer";
-    private const int MaxTurnsPerCustomer = 24;
 
     private string modId;
     private Player2Client client;
@@ -42,7 +41,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
     // 柜前空出来的起始时刻：连续空置 3 秒才判定顾客已离柜并自动关窗
     private float nullClientSince;
 
-    // 每位顾客的交互轮次（identifier -> user/assistant 序列），同顾客跨日延续，超出上限丢最旧
+    // 每位顾客的交互轮次（identifier -> user/assistant 序列），同顾客跨日延续，全量作为 messages 下发
     private static readonly Dictionary<string, List<KeyValuePair<string, string>>> Turns = new Dictionary<string, List<KeyValuePair<string, string>>>();
 
     public static CustomerChatUI Instance { get; private set; }
@@ -289,14 +288,13 @@ internal sealed class CustomerChatUI : MonoBehaviour
         string identifier = boundClient.identifier;
         List<KeyValuePair<string, string>> turns = GetTurns(identifier);
         turns.Add(new KeyValuePair<string, string>("user", text));
-        while (turns.Count > MaxTurnsPerCustomer) turns.RemoveAt(0);
 
         // 产生对话即入档：名字与势力一并带上，名册里不必再回查游戏对象
         CustomerArchive.RecordTalk(identifier, boundClient.displayName, boundClient.clientFaction, null);
         CustomerArchive.AppendLine(identifier, "player", text);
 
         string systemPrompt = ClientSpeech.InteractiveSystemPrompt(boundClient)
-            + "\n" + ClientSpeech.InteractiveContext(boundClient, turns);
+            + "\n" + ClientSpeech.InteractiveContext(boundClient);
         client.Chat(systemPrompt, turns, (ok, reply) =>
         {
             OnChatResult(identifier, ok, reply);
@@ -345,12 +343,24 @@ internal sealed class CustomerChatUI : MonoBehaviour
             ApplyReplyEffects(parsed);
             if (log != null) log.Log("deal actions applied");
 
-            // 议价/赊账触发了游戏自己的对话（接受、拒绝、走人）时，让原版流程留在前台：
-            // 玩家接下来该去平板上成交，这时再压一条我们的气泡只会挡住「下一步」
             Dialogue after = DialogUIManager.Instance != null ? DialogUIManager.Instance.GetCurrentDialog() : null;
+            // 游戏结算对话（接受/拒绝/走人）会抢前台：模型那句不能直接盖上去，
+            // 但也不能丢——挂在结算对话之后播，玩家仍能看到顾客的完整回应
             if (after != null && after != before)
             {
-                if (log != null) log.Log("game dialogue takes over, our line skipped");
+                if (!string.IsNullOrWhiteSpace(text) && boundClient != null
+                    && after.nextDialogue == null && after.endAction == null)
+                {
+                    Dialogue extra = new Dialogue();
+                    extra.SetText(boundClient.displayName, text);
+                    extra.priority = after.priority;
+                    after.SetNextDialogue(extra);
+                    if (log != null) log.Log("game dialogue takes over, our line chained after it");
+                }
+                else if (log != null)
+                {
+                    log.Log("game dialogue takes over, our line skipped");
+                }
                 return;
             }
 

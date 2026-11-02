@@ -14,10 +14,7 @@ internal static class CustomerArchive
 {
     private const string KeyPrefix = "talk:";
     private const string DataField = "data";
-    private const int MaxTranscriptLines = 12;
-    private const int MaxSummaryLength = 400;
-    private const int MaxStanceLength = 120;
-    private const int MaxMemoryLength = 200;
+    // 档案条数上限是存档体积约束，不裁任何单条内容，也不进请求上下文
     private const int MaxRecords = 300;
 
     internal sealed class Record
@@ -38,7 +35,7 @@ internal static class CustomerArchive
         // 大五人格：语气与让步尺度都从这里派生，话量也由外向性折算，不再单存 chatty
         public OceanScores Ocean = new OceanScores();
 
-        // 常客记忆摘要（≤200 字，发言包顺带产出）：原先单独存在 regular:<id>:memory，
+        // 常客记忆摘要（一句话，长度由提示词口径约束）：原先单独存在 regular:<id>:memory，
         // 现在与 summary 同源，避免同一顾客有两套 AI 文本
         public string Memory;
 
@@ -179,7 +176,7 @@ internal static class CustomerArchive
         }
     }
 
-    // 交互对话逐句追加：玩家一句、顾客一句，按行数上限丢最旧
+    // 交互对话逐句追加：玩家一句、顾客一句，全量保留供离店总结取材
     public static void AppendLine(string identifier, string role, string text)
     {
         if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(text)) return;
@@ -209,10 +206,10 @@ internal static class CustomerArchive
                 if (!ok || !TryParseSummary(reply, out string summary, out string stance)) return;
                 Record target;
                 if (!Records.TryGetValue(identifier, out target)) return;
-                target.Summary = TextLimit.Truncate(summary.Trim(), MaxSummaryLength);
+                target.Summary = summary.Trim();
                 if (!string.IsNullOrWhiteSpace(stance))
                 {
-                    target.Stance = TextLimit.Truncate(stance.Trim(), MaxStanceLength);
+                    target.Stance = stance.Trim();
                 }
 
                 Save(target);
@@ -318,9 +315,9 @@ internal static class CustomerArchive
         {
             if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(memory)) return;
             Record record = GetOrCreate(identifier);
-            string trimmed = TextLimit.Truncate(memory.Trim(), MaxMemoryLength);
-            if (record.Memory == trimmed) return;
-            record.Memory = trimmed;
+            string text = memory.Trim();
+            if (record.Memory == text) return;
+            record.Memory = text;
             Save(record);
         }
         catch (Exception ex)
@@ -438,7 +435,6 @@ internal static class CustomerArchive
     private static void AppendLine(Record record, string role, string text)
     {
         record.Transcript.Add(new KeyValuePair<string, string>(role, text.Trim()));
-        while (record.Transcript.Count > MaxTranscriptLines) record.Transcript.RemoveAt(0);
     }
 
     private static Record GetOrCreate(string identifier)

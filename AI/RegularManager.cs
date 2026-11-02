@@ -45,9 +45,6 @@ internal static class RegularManager
     // 缺席退场：距上次实到访达 7 天（到期日被原生冷却压住的天数一并计入）转 left
     private const int AbsentLeftDays = 7;
 
-    // AI 记忆摘要长度上限：一句话量级，控制发言上下文体积
-    private const int MaxMemoryLength = 200;
-
     private const string StatusActive = "active";
     private const string StatusLeft = "left";
     private const string KeyPrefix = "regular:";
@@ -232,7 +229,7 @@ internal static class RegularManager
         }
     }
 
-    // 发言包顺带产出的记忆摘要：只落常客档案，超长截断
+    // 发言包顺带产出的记忆摘要：只落常客档案，原文照录
     public static void OnMemoryProduced(string identifier, string memory)
     {
         try
@@ -240,11 +237,11 @@ internal static class RegularManager
             if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(memory)) return;
             RegularProfile profile;
             if (!Profiles.TryGetValue(identifier, out profile)) return;
-            string trimmed = TextLimit.Truncate(memory.Trim(), MaxMemoryLength);
-            if (profile.Memory == trimmed) return;
-            profile.Memory = trimmed;
+            string text = memory.Trim();
+            if (profile.Memory == text) return;
+            profile.Memory = text;
             // 记忆与 summary 同源：写进顾客档案，不再是 regular 的独立字段
-            CustomerArchive.SetMemory(identifier, trimmed);
+            CustomerArchive.SetMemory(identifier, text);
         }
         catch (Exception ex)
         {
