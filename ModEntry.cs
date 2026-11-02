@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using Probablytalk;
 using UnityEngine;
 
@@ -18,10 +19,43 @@ public class ModEntry : IMod
     public static ModLog Log => active != null ? active.log : null;
     public static Player2Client ActiveClient => active != null ? active.client : null;
     public static string ModId => active != null && active.manifest != null ? active.manifest.ID : null;
+
+    // 存档/会话代数：读档/新档递增，异步回调据此丢弃上一档的结果
+    internal static int SessionGeneration { get; private set; }
+
+    internal static void BumpSession()
+    {
+        SessionGeneration++;
+    }
     public static string RegularsSnapshot() => active != null ? RegularManager.SnapshotJson() : null;
     public static string SpeechSnapshot() => active != null ? ClientSpeech.SnapshotJson() : null;
     public static string TalksSnapshot() => active != null ? CustomerArchive.SnapshotJson() : null;
     public static string CreditsSnapshot() => active != null ? CreditBook.SnapshotJson() : null;
+
+    // 验收快照：把此刻真的会下发给模型的资料原样取出来（带字符数与 token 估算）。
+    // 三方对账靠它——游戏数值 ↔ 下发语义 ↔ 模型行为，只读不改任何状态。
+    // 走 public static 是为了让桥用同一条反射通道取到，不必反射 internal 类型
+    public static string ContextSnapshot()
+    {
+        if (active == null) return null;
+        PlayerStore store = PlayerStore.Instance;
+        StoreClient client = store != null && store.currentClientInstance != null
+            ? store.currentClientInstance.GetClientBlueprint()
+            : null;
+        StoreStation station = StoreStation.Instance;
+        int day = station != null ? station.dayCounter : 0;
+        JObject context = StoreContext.Build(client, day);
+        string brief = ContextBrief.Render(context, "验收快照");
+        return new JObject
+        {
+            ["identifier"] = client != null ? client.identifier : null,
+            ["day"] = day,
+            ["brief"] = brief,
+            ["context"] = context,
+            ["chars"] = brief != null ? brief.Length : 0,
+            ["tokens"] = TokenMeter.Estimate(brief),
+        }.ToString(Newtonsoft.Json.Formatting.None);
+    }
 
     public void Init(ModManifest manifest)
     {
