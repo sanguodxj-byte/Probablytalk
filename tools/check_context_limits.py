@@ -134,7 +134,7 @@ def check_repo():
 
     # 引用面：调上下文入口/发请求的文件必须在 SCOPE 内
     for dir_path, dir_names, file_names in os.walk(ROOT):
-        dir_names[:] = [d for d in dir_names if d not in ("bin", "obj", "build", ".git")]
+        dir_names[:] = [d for d in dir_names if d not in ("bin", "obj", "build") and not d.startswith(".")]
         for name in file_names:
             if not name.endswith(".cs"):
                 continue

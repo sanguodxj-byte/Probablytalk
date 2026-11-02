@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using TMPro;
@@ -36,6 +37,11 @@ internal sealed class CustomerChatUI : MonoBehaviour
     private const float SpinnerDegPerSec = 110f;
     private const float SpinnerGap = 8f;
     private bool busy;
+    private Coroutine waitRoutine;
+    private Coroutine typeRoutine;
+    private bool waitingReply;
+    private float waitDeadline;
+    private int requestGeneration;
     private bool syncSendHeight;
     private CounterTalkButton counterButton;
 
@@ -71,7 +77,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
         UpdateCounterButtonVisibility();
         PollEnterToSend();
         SyncSendButtonHeight();
-        UpdateSpinner();
+        if (waitingReply && Time.unscaledTime >= waitDeadline) OnRequestTimeout();
     }
 
     // 看门狗：这是 modal 纸面板，玩家开着它时世界点击全被挡住。
@@ -130,7 +136,6 @@ internal sealed class CustomerChatUI : MonoBehaviour
         gearButton?.SetPreferredSize(height, height);
         rosterButton?.SetPreferredSize(height, height);
         CustomUIBuilder.RebuildLayout(window.ContentRoot);
-        PlaceSpinner();
         syncSendHeight = false;
     }
 
@@ -219,7 +224,6 @@ internal sealed class CustomerChatUI : MonoBehaviour
             input.onSubmit.AddListener(OnInputSubmitted);
             input.ActivateInputField();
         }
-        CreateSpinner();
         syncSendHeight = true;
     }
 
@@ -305,14 +309,18 @@ internal sealed class CustomerChatUI : MonoBehaviour
 
         string systemPrompt = ClientSpeech.InteractiveSystemPrompt(boundClient)
             + "\n" + ClientSpeech.InteractiveContext(boundClient);
+        int generation = ++requestGeneration;
+        StartWaitingBubble(boundClient.displayName);
         client.Chat(systemPrompt, turns, (ok, reply) =>
         {
+            if (generation != requestGeneration) return;
             OnChatResult(identifier, ok, reply);
         });
     }
 
     private void OnChatResult(string identifier, bool ok, string reply)
     {
+        StopWaitingBubble();
         busy = false;
         sendButton?.SetInteractable(true);
         inputElement?.SetInteractable(true);
@@ -354,22 +362,20 @@ internal sealed class CustomerChatUI : MonoBehaviour
             if (log != null) log.Log("deal actions applied");
 
             Dialogue after = DialogUIManager.Instance != null ? DialogUIManager.Instance.GetCurrentDialog() : null;
-            // 游戏结算对话（接受/拒绝/走人）会抢前台：模型那句不能直接盖上去，
-            // 但也不能丢——挂在结算对话之后播，玩家仍能看到顾客的完整回应
+            // 游戏结算对话（接受/拒绝/走人）会抢前台。已激活链路的顾客，
+            // 把原版对话的文本换成模型这句（按钮与流程保留）；未激活的顾客保持纯原版
             if (after != null && after != before)
             {
                 if (!string.IsNullOrWhiteSpace(text) && boundClient != null
-                    && after.nextDialogue == null && after.endAction == null)
+                    && CustomerArchive.HasTalked(identifier))
                 {
-                    Dialogue extra = new Dialogue();
-                    extra.SetText(boundClient.displayName, text);
-                    extra.priority = after.priority;
-                    after.SetNextDialogue(extra);
-                    if (log != null) log.Log("game dialogue takes over, our line chained after it");
+                    after.SetText(boundClient.displayName, text);
+                    if (DialogUIManager.Instance != null) DialogUIManager.Instance.DisplayClientText(after);
+                    if (log != null) log.Log("game dialogue text replaced by mod line");
                 }
                 else if (log != null)
                 {
-                    log.Log("game dialogue takes over, our line skipped");
+                    log.Log("game dialogue keeps original text");
                 }
                 return;
             }
@@ -380,9 +386,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
                 if (log != null) log.Log("customer reply had no spoken line, bubble skipped");
                 return;
             }
-            Dialogue bubble = new Dialogue();
-            bubble.SetText(boundClient.displayName, text);
-            DialogUIManager.Instance.StartDialogue(bubble);
+            ShowLineTyped(boundClient.displayName, text);
         }
         catch (Exception ex)
         {
@@ -392,6 +396,98 @@ internal sealed class CustomerChatUI : MonoBehaviour
         {
             CloseWindow();
         }
+    }
+
+    // 等待期：省略号气泡循环。每 0.5 秒加一个点，到 15 个点后回到 1 个
+    private void StartWaitingBubble(string name)
+    {
+        waitingReply = true;
+        waitDeadline = Time.unscaledTime + 15f;
+        if (waitRoutine != null) StopCoroutine(waitRoutine);
+        waitRoutine = StartCoroutine(WaitDots(name));
+    }
+
+    private void StopWaitingBubble()
+    {
+        waitingReply = false;
+        if (waitRoutine != null)
+        {
+            StopCoroutine(waitRoutine);
+            waitRoutine = null;
+        }
+    }
+
+    private IEnumerator WaitDots(string name)
+    {
+        DialogUIManager ui = DialogUIManager.Instance;
+        if (ui == null)
+        {
+            waitingReply = false;
+            yield break;
+        }
+        Dialogue bubble = new Dialogue();
+        bubble.SetText(name, ".");
+        ui.StartDialogue(bubble);
+        TextBubble view = ui.clientBubble;
+        if (view != null && view.typewriter != null) view.typewriter.StopShowingText();
+        int dots = 1;
+        while (waitingReply)
+        {
+            if (view != null && view.textfield != null) view.textfield.text = new string('.', dots);
+            dots = dots % 15 + 1;
+            yield return new WaitForSecondsRealtime(0.5f);
+        }
+        waitRoutine = null;
+    }
+
+    // 15 秒未回复：左上角报错，并给出固定追问；迟到的回包由 generation 丢弃
+    private void OnRequestTimeout()
+    {
+        if (!waitingReply) return;
+        requestGeneration++;
+        StopWaitingBubble();
+        busy = false;
+        sendButton?.SetInteractable(true);
+        inputElement?.SetInteractable(true);
+        if (StoreUIManager.Instance != null)
+        {
+            StoreUIManager.Instance.Notify(Loc("chat_timeout", "AI response timed out"), "sec");
+        }
+        string name = boundClient != null ? boundClient.displayName : null;
+        ShowLineTyped(name, Loc("chat_timeout_reply", "你说什么？我没听清。"));
+        if (log != null) log.Warning("customer chat timed out after 15s");
+    }
+
+    // 逐字显示：每秒 2 个字（每 0.5 秒 1 个）
+    private void ShowLineTyped(string name, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        DialogUIManager ui = DialogUIManager.Instance;
+        if (ui == null) return;
+        Dialogue bubble = new Dialogue();
+        bubble.SetText(name, text);
+        ui.StartDialogue(bubble);
+        if (typeRoutine != null) StopCoroutine(typeRoutine);
+        typeRoutine = StartCoroutine(TypeLine(ui, text));
+    }
+
+    private IEnumerator TypeLine(DialogUIManager ui, string text)
+    {
+        TextBubble view = ui.clientBubble;
+        if (view != null && view.typewriter != null) view.typewriter.StopShowingText();
+        int shown = 0;
+        while (shown < text.Length)
+        {
+            shown++;
+            if (ui != DialogUIManager.Instance)
+            {
+                typeRoutine = null;
+                yield break;
+            }
+            if (view != null && view.textfield != null) view.textfield.text = text.Substring(0, shown);
+            yield return new WaitForSecondsRealtime(0.5f);
+        }
+        typeRoutine = null;
     }
 
     // 回包是一个 JSON 对象（台词 + 改价 + 欠账 + 记忆）。这里只把中文动作词翻译成游戏接口，

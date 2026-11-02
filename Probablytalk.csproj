@@ -68,6 +68,11 @@
       <HintPath>$(GameManagedDir)\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- TextBubble.typewriter 的字段类型来自这个程序集：访问打字机控件必须引用它 -->
+    <Reference Include="Febucci.TextAnimator.Runtime">
+      <HintPath>$(GameManagedDir)\Febucci.TextAnimator.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="PlaceAssemblyInModRoot" AfterTargets="Build">
