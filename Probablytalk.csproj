@@ -7,6 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- tools/ 下是离线台与检查器，不进 mod 程序集：默认 glob 会把它们的 .cs 一起编 -->
+    <Compile Remove="tools\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Assembly-CSharp">
       <HintPath>$(GameManagedDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>

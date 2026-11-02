@@ -1,4 +1,3 @@
-using System.Text;
 using Newtonsoft.Json.Linq;
 
 namespace Probablytalk;
@@ -49,11 +48,12 @@ internal static class TokenMeter
     internal static int CountContentChars(JArray messages)
     {
         if (messages == null) return 0;
-        var sb = new StringBuilder();
+        int total = 0;
         foreach (JToken message in messages)
         {
-            sb.Append((string)message["content"] ?? string.Empty);
+            string content = (string)message["content"];
+            if (content != null) total += content.Length;
         }
-        return sb.Length;
+        return total;
     }
 }
