@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 路径来源（GameManagedDir）与产物位置（build\ 下）由 PSMod\Directory.Build.props 统一提供 -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.Physics2DModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameManagedDir)\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameManagedDir)\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameManagedDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GameManagedDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="PlaceAssemblyInModRoot" AfterTargets="Build">
+    <!-- manifest 的 <Assembly> 相对 mod 根解析：DLL 必须与 manifest 同目录，
+         否则加载门禁按 "listed assembly not found" 拒载 -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildThisFileDirectory)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- 本地化与贴图资源，随构建一并部署 -->
+  <ItemGroup>
+    <ModLocalizationFiles Include="$(MSBuildThisFileDirectory)Localization\**\*.csv" />
+    <ModTextureFiles Include="$(MSBuildThisFileDirectory)Textures\**\*.png" />
+  </ItemGroup>
+
+  <Target Name="DeployToGameMods" AfterTargets="Build" Condition="Exists('$(GameManagedDir)')">
+    <!-- 部署目录的 DLL 必须与 manifest 列出的清单一致：出现未列出 DLL 会命中拒绝启用的门禁 -->
+    <Copy SourceFiles="$(TargetPath);$(MSBuildThisFileDirectory)manifest.xml" DestinationFolder="$(ModDeployDir)" SkipUnchangedFiles="true" ContinueOnError="true" Retries="0" />
+    <Copy SourceFiles="@(ModLocalizationFiles)" DestinationFolder="$(ModDeployDir)Localization" SkipUnchangedFiles="true" Condition="'@(ModLocalizationFiles)' != ''" ContinueOnError="true" Retries="0" />
+    <Copy SourceFiles="@(ModTextureFiles)" DestinationFolder="$(ModDeployDir)Textures" SkipUnchangedFiles="true" Condition="'@(ModTextureFiles)' != ''" ContinueOnError="true" Retries="0" />
+  </Target>
+
+</Project>

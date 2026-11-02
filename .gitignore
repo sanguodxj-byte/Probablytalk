@@ -1,0 +1,15 @@
+bin/
+obj/
+build/
+*.dll
+.opencode/
+.zcode/
+.workbuddy/
+.office-claw/
+.agent_history/
+coding_memory/
+memory/
+context/
+Localization/
+Patches/
+Textures/

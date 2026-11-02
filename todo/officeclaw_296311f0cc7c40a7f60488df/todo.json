@@ -1,0 +1,63 @@
+
+[
+  {
+    "id": "icons",
+    "content": "像素画风图标重制",
+    "activeForm": "生成像素画风图标",
+    "description": "用低分辨率网格绘制 wrench/menu/gear/spinner 四张 PNG，NEAREST 放大；IconSprites 改 Point 采样",
+    "status": "in_progress",
+    "depends_on": [],
+    "result_summary": null,
+    "meta_data": null,
+    "selected_model_id": null,
+    "generation_token": null
+  },
+  {
+    "id": "cfg",
+    "content": "端点规范化与模型模型端点",
+    "activeForm": "改造 Player2Config/Player2Client",
+    "description": "NormalizeEndpoint、EffectiveFallbackEndpoint 出完整 URL、ModelsUrl；BYO 通道改用完整 URL；新增 FetchModels",
+    "status": "pending",
+    "depends_on": [],
+    "result_summary": null,
+    "meta_data": null,
+    "selected_model_id": null,
+    "generation_token": null
+  },
+  {
+    "id": "ui",
+    "content": "API 配置窗口重构",
+    "activeForm": "重构 API 配置窗口",
+    "description": "Player2 首行仅两个按钮（检测桌面端/网页授权）无说明文字；提供商/端点/密钥/模型；端点失焦自动补全；模型获取按钮转下拉",
+    "status": "pending",
+    "depends_on": [],
+    "result_summary": null,
+    "meta_data": null,
+    "selected_model_id": null,
+    "generation_token": null
+  },
+  {
+    "id": "l10n",
+    "content": "本地化新增/修订键",
+    "activeForm": "更新本地化 CSV",
+    "description": "en.csv/zh.csv 新增按钮与获取键、修订 provider/endpoint/apikey/model 文案",
+    "status": "pending",
+    "depends_on": [],
+    "result_summary": null,
+    "meta_data": null,
+    "selected_model_id": null,
+    "generation_token": null
+  },
+  {
+    "id": "build",
+    "content": "构建并部署校验",
+    "activeForm": "构建部署并校验",
+    "description": "注入环境变量构建 0 错 0 警；部署游戏 mod 目录并核对 SHA 一致；清理水印",
+    "status": "pending",
+    "depends_on": [],
+    "result_summary": null,
+    "meta_data": null,
+    "selected_model_id": null,
+    "generation_token": null
+  }
+]

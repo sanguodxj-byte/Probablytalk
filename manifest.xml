@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Manifest>
+  <ID>Probablytalk</ID>
+  <Name>Probablytalk</Name>
+  <Author></Author>
+  <ModVersion>0.1.0</ModVersion>
+  <GameVersions />
+  <Prerequisites />
+  <Assemblies>
+    <Assembly>Probablytalk.dll</Assembly>
+  </Assemblies>
+  <Capabilities>
+    <Capability>network</Capability>
+  </Capabilities>
+</Manifest>
