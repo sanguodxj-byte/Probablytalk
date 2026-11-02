@@ -55,6 +55,8 @@ internal static class StoreContext
             if (!string.IsNullOrWhiteSpace(store.storeName)) shop["storeName"] = store.storeName;
             if (store.garbageLevel > 0) shop["garbage"] = store.garbageLevel;
             if (!store.isPowerOn) shop["powerOut"] = true;
+            // 警报是听得见看得见的：响着就是响着，谁来了他自然看得见
+            if (store.isSecurityAlarmActive) shop["alarm"] = true;
         }
         context["shop"] = shop;
     }
@@ -384,9 +386,41 @@ internal static class StoreContext
             if (exposed) row["exposed"] = true;
             // 标签是伪造的这件事，只有被当场验穿之后他才可能知道；没验穿就别说破
             if (exposed && feature.fakeCondition != null) row["fake"] = true;
+            AddPriceEffect(row, feature);
             list.Add(row);
         }
         return list;
+    }
+
+    // 玩家强改进价格的**结果**：香水、敲诈、威胁在原版里都是挂在货上的临时特性
+    // （ItemFeatureList.NeuroActivePerfumeSelling/Buying、BlackmailDiscount/Markup、ThreatenDiscount/Markup），
+    // 修正值就是游戏算进价格的百分比——GameItem.ComposeStagedValue 里写的是 1 + mod/100。
+    // 这里把数算好写死，模型只看结果不做乘法；取不到或为零就不写，宁缺不编。
+    private static void AddPriceEffect(JObject row, ItemFeature feature)
+    {
+        int mod;
+        try
+        {
+            mod = feature.GetCurrentValueMod();
+        }
+        catch (Exception)
+        {
+            return;
+        }
+        if (mod == 0) return;
+        row["price"] = mod;
+        row["stage"] = StageText(feature.valueStage);
+    }
+
+    // 三档对应原版 ComposeStagedValue 的三个入参：Innate 改货值、Market 改标价、Final 改这单成交价
+    private static string StageText(ItemFeature.ValueStage stage)
+    {
+        switch (stage)
+        {
+            case ItemFeature.ValueStage.Innate: return "货值";
+            case ItemFeature.ValueStage.Final: return "这单成交价";
+            default: return "标价";
+        }
     }
 
     // 价格倾向：顾客自带的买/卖价修正（百分比），直接决定他觉得贵还是便宜

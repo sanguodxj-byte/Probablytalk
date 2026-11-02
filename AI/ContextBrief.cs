@@ -39,6 +39,7 @@ internal static class ContextBrief
         if (!string.IsNullOrWhiteSpace(storeName)) stats.Append(" | at ").Append(storeName);
         if (shop["garbage"] != null) stats.Append(" | garbage piled ").Append(Int(shop, "garbage"));
         if (Bool(shop, "powerOut")) stats.Append(" | power out");
+        if (Bool(shop, "alarm")) stats.Append(" | alarm going off");
         lines.Add(stats.ToString());
 
         JArray events = shop["events"] as JArray;
@@ -299,7 +300,9 @@ internal static class ContextBrief
         if (parts.Count > 0) lines.Add(label + ": " + string.Join("; ", parts));
     }
 
-    // 特性行：已揭穿的打 [exposed]，有伪装来源的打 [fake]，让人一眼看出这货有鬼
+    // 特性行：验穿的打 [exposed]、确认伪造的打 [fake]；
+    // 带价格修正的（香水、敲诈、威胁这类临时特性）直接把百分比算好写在括号里，
+    // 模型只看结果不做乘法——他看得见标价牌变了多少
     private static string Features(JArray features)
     {
         if (features == null || features.Count == 0) return null;
@@ -313,7 +316,14 @@ internal static class ContextBrief
             var marks = new List<string>();
             if (Bool(feature, "exposed")) marks.Add("exposed");
             if (Bool(feature, "fake")) marks.Add("fake");
-            parts.Add(marks.Count > 0 ? text + " [" + string.Join(", ", marks) + "]" : text);
+            string label = marks.Count > 0 ? text + " [" + string.Join(", ", marks) + "]" : text;
+            int price = Int(feature, "price");
+            string stage = Str(feature, "stage");
+            if (price != 0 && !string.IsNullOrWhiteSpace(stage))
+            {
+                label += "（" + stage + (price > 0 ? " +" : " −") + Math.Abs(price) + "%）";
+            }
+            parts.Add(label);
         }
         return parts.Count > 0 ? string.Join(" / ", parts) : null;
     }
