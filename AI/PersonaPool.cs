@@ -132,21 +132,24 @@ internal static class PersonaPool
 
     // 性子描述：把五项分数按阈值折成行为结论，直接写进资料。
     // 模型不需要看分数、也不需要知道「分高往哪端演」这种推演规则——那是代码的活
+    //
+    // 措辞一律写成"他遇到某事会怎么做"，不写成可以照念的形容词短语：
+    // 「只认熟货」「计较细节和账目」这类四六字说法被模型原样搬进过台词
+    // （"剩下这些都是熟货，账目我记得清"），整句就变成人物小传而不是说话了
     internal static string Describe(CustomerArchive.OceanScores ocean, string archetype)
     {
         if (ocean == null) return null;
         var traits = new List<string>();
-        if (ocean.Openness >= 65) traits.Add("爱听新鲜说法，对古怪货有兴趣");
-        else if (ocean.Openness <= 35) traits.Add("只认熟货，嫌新花样麻烦");
-        if (ocean.Conscientiousness >= 65) traits.Add("计较细节和账目");
-        else if (ocean.Conscientiousness <= 35) traits.Add("马虎，随口答应");
-        if (ocean.Extraversion >= 65) traits.Add("话多，会主动搭话");
-        else if (ocean.Extraversion <= 35) traits.Add("寡言，只答不问");
-        if (ocean.Agreeableness >= 65) traits.Add("好说话，容易让步");
-        else if (ocean.Agreeableness <= 35) traits.Add("强硬，爱抬价，记仇");
-        if (ocean.Neuroticism >= 65) traits.Add("容易焦虑发火，被压价就急");
-        else if (ocean.Neuroticism <= 35) traits.Add("沉得住气，不当回事");
-        if (traits.Count == 0) traits.Add("不温不火，平常心");
+        if (ocean.Openness >= 65) traits.Add("没见过的货他想听听来历，越稀奇越想看");
+        else if (ocean.Openness <= 35) traits.Add("没见过的东西他摇头，只肯要自己认得的");
+        if (ocean.Conscientiousness >= 65) traits.Add("他一件件过眼，价钱和来路都要问清");
+        else if (ocean.Conscientiousness <= 35) traits.Add("他懒得细看，差不多就点头");
+        // 外向性不在这里写：它管的是"说多少"，归 StyleBook 的文风指令，两处都写就是复写
+        if (ocean.Agreeableness >= 65) traits.Add("他容易点头，差不多就应下来");
+        else if (ocean.Agreeableness <= 35) traits.Add("他不肯让，让了会记着这笔");
+        if (ocean.Neuroticism >= 65) traits.Add("被压价他就急，脸上挂不住");
+        else if (ocean.Neuroticism <= 35) traits.Add("多大的事他也不慌");
+        if (traits.Count == 0) traits.Add("他不好也不坏，随大流");
         string body = string.Join("；", traits);
         return string.IsNullOrWhiteSpace(archetype) ? body : archetype + "：" + body;
     }

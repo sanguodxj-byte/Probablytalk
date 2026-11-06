@@ -75,12 +75,6 @@
     </Reference>
   </ItemGroup>
 
-  <Target Name="PlaceAssemblyInModRoot" AfterTargets="Build">
-    <!-- manifest 的 <Assembly> 相对 mod 根解析：DLL 必须与 manifest 同目录，
-         否则加载门禁按 "listed assembly not found" 拒载 -->
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildThisFileDirectory)" SkipUnchangedFiles="true" />
-  </Target>
-
   <!-- 本地化与贴图资源，随构建一并部署 -->
   <ItemGroup>
     <ModLocalizationFiles Include="$(MSBuildThisFileDirectory)Localization\**\*.csv" />

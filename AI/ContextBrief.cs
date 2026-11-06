@@ -232,17 +232,6 @@ internal static class ContextBrief
         string original = Str(client, "originalLine");
         if (!string.IsNullOrWhiteSpace(original)) lines.Add("Original line: " + original);
 
-        JObject past = client["pastVisit"] as JObject;
-        if (past != null)
-        {
-            var visit = new StringBuilder("Last visit: day ").Append(Int(past, "day"));
-            string summary = Str(past, "summary");
-            if (!string.IsNullOrWhiteSpace(summary)) visit.Append(" — ").Append(summary);
-            string stance = Str(past, "stance");
-            if (!string.IsNullOrWhiteSpace(stance)) visit.Append(" | attitude: ").Append(stance);
-            lines.Add(visit.ToString());
-        }
-
         AddInsight(lines, client["insight"] as JObject);
     }
 
@@ -373,6 +362,16 @@ internal static class ContextBrief
         line.Append(" | markup pushed ").Append(Int(negotiation, "markupApplied")).Append("%");
         lines.Add(line.ToString());
 
+        // 玩家当场改的价、敲诈与威胁是既成事实：变化已经发生在顾客面前，只能演出和记住，无权否认
+        var forced = new List<string>();
+        int markupNow = Int(negotiation, "markupNow");
+        int discountNow = Int(negotiation, "discountNow");
+        if (markupNow > 0) forced.Add("asked " + markupNow + "% above the sticker");
+        if (discountNow > 0) forced.Add("offered " + discountNow + "% off");
+        if (negotiation["blackmailed"] != null) forced.Add("is blackmailing you");
+        if (negotiation["threatened"] != null) forced.Add("threatens you with an aug scan");
+        if (forced.Count > 0) lines.Add("Player just did: " + string.Join(", ", forced.ToArray()));
+
         if (negotiation["owes"] != null || negotiation["creditLine"] != null)
         {
             var credit = new StringBuilder("Credit: ");
@@ -395,8 +394,6 @@ internal static class ContextBrief
         if (regular == null) return;
         var text = new StringBuilder("Regular: tier ").Append(Int(regular, "tier"))
             .Append(" | visits ").Append(Int(regular, "visits"));
-        string memory = Str(regular, "memory");
-        if (!string.IsNullOrWhiteSpace(memory)) text.Append(" | memory ").Append(memory);
         lines.Add(text.ToString());
     }
 

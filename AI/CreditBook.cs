@@ -71,6 +71,7 @@ internal static class CreditBook
                     case "amount": if (int.TryParse(value, out parsed)) entry.Amount = parsed; break;
                     case "day": if (int.TryParse(value, out parsed)) entry.Day = parsed; break;
                     case "name": entry.Name = value; break;
+                    case "pending": if (int.TryParse(value, out parsed) && parsed > 0) Pending[identifier] = parsed; break;
                 }
             }
         }
@@ -125,18 +126,19 @@ internal static class CreditBook
             if (client == null || string.IsNullOrEmpty(client.identifier)) return 0;
             int budget = client.GetBudget();
             int shortfall = Shortfall(client, budget);
-            if (shortfall <= 0) shortfall = Math.Min(Math.Max(0, requested), MaxPerDeal);
             if (shortfall <= 0) return 0;
 
             int owed = DebtOf(client.identifier);
-            int room = Math.Max(0, MaxTotal - owed);
+            int staged;
+            Pending.TryGetValue(client.identifier, out staged);
+            // 已提交债务 + 未提交垫付共同占用额度，避免同一到店多次 lend 超额
+            int room = Math.Max(0, MaxTotal - owed - staged);
             int amount = Math.Min(shortfall, Math.Min(MaxPerDeal, room));
             if (amount <= 0) return 0;
 
             client.ModBudget(amount);
-            int staged;
-            Pending.TryGetValue(client.identifier, out staged);
             Pending[client.identifier] = staged + amount;
+            SavePending(client.identifier, Pending[client.identifier]);
             if (_log != null) _log.Log("credit staged " + amount + " for " + client.identifier);
             return amount;
         }
@@ -156,6 +158,7 @@ internal static class CreditBook
             int staged;
             if (!Pending.TryGetValue(identifier, out staged) || staged <= 0) return;
             Pending.Remove(identifier);
+            SavePending(identifier, 0);
 
             Entry entry = GetOrCreate(identifier);
             entry.Name = string.IsNullOrEmpty(name) ? entry.Name : name;
@@ -176,6 +179,7 @@ internal static class CreditBook
     {
         if (string.IsNullOrEmpty(identifier)) return;
         Pending.Remove(identifier);
+        SavePending(identifier, 0);
     }
 
     // 收账：从顾客当前预算里扣，扣多少由债务与他手上的钱共同封顶，扣到的钱进玩家现金。
@@ -272,6 +276,18 @@ internal static class CreditBook
         ModHelper.SetModData(_modId, KeyPrefix + entry.Identifier + ":name", entry.Name ?? string.Empty);
     }
 
+    // 未提交垫付也落盘：否则垫付后存档/读档会出现“预算已加、账本没债”
+    private static void SavePending(string identifier, int amount)
+    {
+        if (string.IsNullOrEmpty(_modId) || string.IsNullOrEmpty(identifier)) return;
+        if (amount <= 0)
+        {
+            ModHelper.RemoveModData(_modId, KeyPrefix + identifier + ":pending");
+            return;
+        }
+        ModHelper.SetModData(_modId, KeyPrefix + identifier + ":pending", amount.ToString());
+    }
+
     private static void Remove(string identifier)
     {
         Entries.Remove(identifier);
@@ -279,6 +295,7 @@ internal static class CreditBook
         ModHelper.RemoveModData(_modId, KeyPrefix + identifier + ":amount");
         ModHelper.RemoveModData(_modId, KeyPrefix + identifier + ":day");
         ModHelper.RemoveModData(_modId, KeyPrefix + identifier + ":name");
+        ModHelper.RemoveModData(_modId, KeyPrefix + identifier + ":pending");
     }
 
     private static int CurrentDay()

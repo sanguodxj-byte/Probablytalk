@@ -37,7 +37,12 @@ internal static class IconSprites
             Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Point;
             tex.wrapMode = TextureWrapMode.Clamp;
-            if (!tex.LoadImage(bytes)) return null;
+            if (!tex.LoadImage(bytes))
+            {
+                // 解码失败：销毁临时纹理，别每次重试都留一张
+                UnityEngine.Object.Destroy(tex);
+                return null;
+            }
             return Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
         }
         catch (Exception)

@@ -15,11 +15,10 @@ internal static class ReplyJson
         public string Action;
         public int Percent;
         public string Credit;
-        public string Memory;
+        // 顾客自己的收尾动作：目前只有 refuse（不接受并离开）。玩家侧的交易按钮不在这里
+        public string Move;
         public string Opening;
         public string Chat;
-        public string Summary;
-        public string Stance;
     }
 
     internal static Reply Parse(string text)
@@ -50,11 +49,9 @@ internal static class ReplyJson
 
         reply.Line = Text(obj, "text");
         reply.Credit = Text(obj, "credit");
-        reply.Memory = Text(obj, "memory");
+        reply.Move = Text(obj, "move");
         reply.Opening = Text(obj, "opening");
         reply.Chat = Text(obj, "chat");
-        reply.Summary = Text(obj, "summary");
-        reply.Stance = Text(obj, "stance");
 
         JToken price = obj["bargain"];
         JObject structured = price as JObject;

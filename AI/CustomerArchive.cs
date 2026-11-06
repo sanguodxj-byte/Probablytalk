@@ -15,15 +15,13 @@ internal static class CustomerArchive
     private const string KeyPrefix = "talk:";
     private const string DataField = "data";
     // 档案条数上限是存档体积约束，不裁任何单条内容，也不进请求上下文
-    private const int MaxRecords = 300;
+    // 顾客档案只增不删：不再设条数上限（决策见 docs/decisions/2026-11-02-上下文不设上限.md）
 
     internal sealed class Record
     {
         public string Identifier;
         public string Name;
         public string Faction;
-        public string Summary;
-        public string Stance;
 
         // 人格原型名（如「冷漠的精算」）：由 PersonaPool 按顾客类型抽池决定，比裸分数更好读
         public string Archetype;
@@ -35,17 +33,18 @@ internal static class CustomerArchive
         // 大五人格：语气与让步尺度都从这里派生，话量也由外向性折算，不再单存 chatty
         public OceanScores Ocean = new OceanScores();
 
-        // 常客记忆摘要（一句话，长度由提示词口径约束）：原先单独存在 regular:<id>:memory，
-        // 现在与 summary 同源，避免同一顾客有两套 AI 文本
-        public string Memory;
-
         public int FirstDay;
         public int LastDay;
         public int LastTalkDay;
         public int Talks;
         public int Deals;
 
-        // 本会话内的往来记录（玩家/顾客各自的台词），只供离店总结取材，不落盘
+        // 好感度（0-100，仅常客参与）：50 中性，越低越厌恶，越高越有好感。
+        // 数值只由离店评估的 delta 与代码的价格标签使用，AffinityDay 标记最近一次评估日
+        public int Affinity = 50;
+        public int AffinityDay;
+
+        // 对话往来记录（玩家/顾客各自的台词与事件），完整持久化落盘作为顾客记忆
         public List<KeyValuePair<string, string>> Transcript = new List<KeyValuePair<string, string>>();
     }
 
@@ -67,18 +66,6 @@ internal static class CustomerArchive
 
     private static readonly Dictionary<string, Record> Records = new Dictionary<string, Record>();
 
-    // 同日已发起总结的键（identifier#day）：离开流程可能被重复触发，避免同一顾客反复请求
-    private static readonly HashSet<string> Summarized = new HashSet<string>();
-
-    // 离店总结的角色指令：summary/stance 两键。性格不在这里产出——
-    // 它由 PersonaPool 在首次请求前按类型池 roll 定好，模型无权改
-    private const string SummaryPrompt =
-        "给这位顾客写档案。输出格式：只回一个 JSON 对象，不要任何别的文字。\n\n" +
-        "{\"summary\":\"两三句话概括这次交流与结果\",\"stance\":\"一句话概括他对本店态度的变化\"}\n\n" +
-        "总结不要编造资料里没有的事，顺着他的性子写。";
-
-    private const string SummaryInput = "按上面的格式给这位顾客写档案。";
-
     public static void Setup(string modId, Player2Client client, ModLog log)
     {
         _modId = modId;
@@ -92,7 +79,6 @@ internal static class CustomerArchive
         _client = null;
         _log = null;
         Records.Clear();
-        Summarized.Clear();
     }
 
     public static void LoadAll()
@@ -100,14 +86,21 @@ internal static class CustomerArchive
         try
         {
             Records.Clear();
-            Summarized.Clear();
             if (string.IsNullOrEmpty(_modId)) return;
             foreach (string key in ModHelper.GetModDataKeys(_modId))
             {
                 string identifier;
                 string field;
                 if (!TrySplitKey(key, out identifier, out field) || field != DataField) continue;
-                TryApplyJson(GetOrCreate(identifier), ModHelper.GetModData(_modId, key));
+                try
+                {
+                    TryApplyJson(GetOrCreate(identifier), ModHelper.GetModData(_modId, key));
+                }
+                catch (Exception ex)
+                {
+                    // 逐条隔离：一条坏档案不能让其余顾客全部不加载
+                    if (_log != null) _log.Warning("Customer archive entry failed: " + identifier + " - " + ex.Message);
+                }
             }
         }
         catch (Exception ex)
@@ -149,7 +142,6 @@ internal static class CustomerArchive
             if (_log != null) _log.Warning("Customer archive clear failed: " + ex.Message);
         }
         Records.Clear();
-        Summarized.Clear();
     }
 
     // 产生对话即入档：发言包命中（开场白被替换）与柜台交互发送都走这里
@@ -168,7 +160,6 @@ internal static class CustomerArchive
             record.Talks++;
             if (!string.IsNullOrWhiteSpace(line)) AppendLine(record, "customer", line);
             Save(record);
-            TrimOverflow();
         }
         catch (Exception ex)
         {
@@ -176,49 +167,81 @@ internal static class CustomerArchive
         }
     }
 
-    // 交互对话逐句追加：玩家一句、顾客一句，全量保留供离店总结取材
+    // 交互对话逐句追加：玩家一句、顾客一句，全量落盘持久化作为记忆
     public static void AppendLine(string identifier, string role, string text)
     {
         if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(text)) return;
-        AppendLine(GetOrCreate(identifier), role, text);
+        Record record = GetOrCreate(identifier);
+        AppendLine(record, role, text);
+        Save(record);
     }
 
-    // 离店总结入口：调用方须在游戏清空柜台前调用（前缀），此时顾客自带货物仍可读。
-    // 两道门槛：今天没在这里说过话的顾客不做总结（路过不入档），同一顾客同日只总结一次
-    public static void SummarizeOnLeave(StoreClient client)
+    // 顾客离柜处理：记录成交数据，不发起任何 LLM 总结请求（记忆完全由完整往来承担）
+    public static void OnClientLeave(StoreClient client)
     {
         try
         {
-            if (client == null || _client == null || string.IsNullOrEmpty(client.identifier)) return;
+            if (client == null || string.IsNullOrEmpty(client.identifier)) return;
             Record record;
             if (!Records.TryGetValue(client.identifier, out record) || record.Talks <= 0) return;
             int day = CurrentDay();
             if (record.LastTalkDay != day) return;
-            if (!Summarized.Add(record.Identifier + "#" + day)) return;
             if (client.isBusinessComplete) record.Deals++;
             Save(record);
-
-            string contextJson = ContextBrief.Render(
-                StoreContext.Build(client, CurrentDay(), record.Transcript), "这单生意刚结束，他离开了柜台。");
-            string identifier = record.Identifier;
-            _client.Chat(SummaryPrompt, SummaryInput, contextJson, (ok, reply) =>
-            {
-                if (!ok || !TryParseSummary(reply, out string summary, out string stance)) return;
-                Record target;
-                if (!Records.TryGetValue(identifier, out target)) return;
-                target.Summary = summary.Trim();
-                if (!string.IsNullOrWhiteSpace(stance))
-                {
-                    target.Stance = stance.Trim();
-                }
-
-                Save(target);
-            });
         }
         catch (Exception ex)
         {
-            if (_log != null) _log.Warning("Customer archive summary failed: " + ex.Message);
+            if (_log != null) _log.Warning("Customer archive on leave failed: " + ex.Message);
         }
+    }
+
+    // 兼容原调用名
+    public static void SummarizeOnLeave(StoreClient client) => OnClientLeave(client);
+
+    // 好感度（0-100）：只有常客参与，缺档时按中性 50 返回
+    internal static int AffinityOf(string identifier)
+    {
+        Record record;
+        return !string.IsNullOrEmpty(identifier) && Records.TryGetValue(identifier, out record)
+            ? Math.Max(0, Math.Min(100, record.Affinity))
+            : 50;
+    }
+
+    internal static int AffinityDayOf(string identifier)
+    {
+        Record record;
+        return !string.IsNullOrEmpty(identifier) && Records.TryGetValue(identifier, out record)
+            ? record.AffinityDay
+            : 0;
+    }
+
+    // 最近一次说话的游戏日：用来确认「本次到店确实聊过」，只买卖不搭话的到访不重复评估
+    internal static int LastTalkDayOf(string identifier)
+    {
+        Record record;
+        return !string.IsNullOrEmpty(identifier) && Records.TryGetValue(identifier, out record)
+            ? record.LastTalkDay
+            : 0;
+    }
+
+    // 只由离店评估调用：夹取后落盘，并记下评估日，保证同一顾客每天只评估一次
+    internal static void SetAffinity(string identifier, int value, int day)
+    {
+        if (string.IsNullOrEmpty(identifier)) return;
+        Record record = GetOrCreate(identifier);
+        record.Affinity = Math.Max(0, Math.Min(100, value));
+        record.AffinityDay = day;
+        Save(record);
+    }
+
+    public static List<KeyValuePair<string, string>> GetTranscript(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier)) return null;
+        if (Records.TryGetValue(identifier, out Record record))
+        {
+            return record.Transcript;
+        }
+        return null;
     }
 
     // 性格定型：顾客第一次进入对话管线时由代码抽池决定，随即写锁落档。
@@ -228,6 +251,8 @@ internal static class CustomerArchive
         try
         {
             if (client == null || string.IsNullOrEmpty(client.identifier)) return;
+            // 博士不 roll：固定人设（InventorInstruction），随机原型/大五人格会跟他打架
+            if (PromptBook.IsInventor(client)) return;
             Record record = GetOrCreate(client.identifier);
             if (record.PersonaLocked) return;
             ClientKind kind = PersonaPool.KindOf(client);
@@ -286,14 +311,6 @@ internal static class CustomerArchive
         }
     }
 
-    // 常客记忆：与 summary 同一份档案，读档后仍在
-    internal static string MemoryOf(string identifier)
-    {
-        Record record;
-        if (string.IsNullOrEmpty(identifier) || !Records.TryGetValue(identifier, out record)) return null;
-        return record.Memory;
-    }
-
     // 名字与派系：RegularManager 不再单独落盘，统一从这里取
     internal static string NameOf(string identifier)
     {
@@ -309,43 +326,11 @@ internal static class CustomerArchive
         return record.Faction;
     }
 
-    internal static void SetMemory(string identifier, string memory)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(memory)) return;
-            Record record = GetOrCreate(identifier);
-            string text = memory.Trim();
-            if (record.Memory == text) return;
-            record.Memory = text;
-            Save(record);
-        }
-        catch (Exception ex)
-        {
-            if (_log != null) _log.Warning("Customer memory failed: " + ex.Message);
-        }
-    }
-
     // 是否被玩家主动搭过话：预生成发言包的唯一开关——新客不预生成，聊过一次之后再来才恢复
     internal static bool HasTalked(string identifier)
     {
         Record record;
         return !string.IsNullOrEmpty(identifier) && Records.TryGetValue(identifier, out record) && record.Talks > 0;
-    }
-
-    // 上一次离店的总结：回灌进下一次对话的上下文，让「说过的话」真的影响「以后怎么说话」
-    internal static bool TryGetPastVisit(string identifier, out string summary, out string stance, out int lastDay)
-    {
-        summary = null;
-        stance = null;
-        lastDay = 0;
-        Record record;
-        if (string.IsNullOrEmpty(identifier) || !Records.TryGetValue(identifier, out record)) return false;
-        if (string.IsNullOrWhiteSpace(record.Summary)) return false;
-        summary = record.Summary;
-        stance = record.Stance;
-        lastDay = record.LastDay;
-        return true;
     }
 
     // 大五人格：没有档案时返回全 50（中性），提示词据此按普通人演
@@ -393,7 +378,7 @@ internal static class CustomerArchive
         JArray list = new JArray();
         foreach (Record record in Roster())
         {
-            list.Add(new JObject
+            JObject item = new JObject
             {
                 ["identifier"] = record.Identifier,
                 ["name"] = record.Name,
@@ -402,10 +387,10 @@ internal static class CustomerArchive
                 ["lastDay"] = record.LastDay,
                 ["talks"] = record.Talks,
                 ["deals"] = record.Deals,
-                ["summary"] = record.Summary,
-                ["stance"] = record.Stance,
                 ["archetype"] = record.Archetype,
-            ["personaLocked"] = record.PersonaLocked,
+                ["personaLocked"] = record.PersonaLocked,
+                ["affinity"] = record.Affinity,
+                ["affinityDay"] = record.AffinityDay,
                 ["ocean"] = new JObject
                 {
                     ["openness"] = record.Ocean.Openness,
@@ -414,22 +399,19 @@ internal static class CustomerArchive
                     ["agreeableness"] = record.Ocean.Agreeableness,
                     ["neuroticism"] = record.Ocean.Neuroticism,
                 },
-            });
+            };
+            if (record.Transcript != null && record.Transcript.Count > 0)
+            {
+                JArray trans = new JArray();
+                foreach (KeyValuePair<string, string> line in record.Transcript)
+                {
+                    trans.Add(new JObject { ["role"] = line.Key, ["text"] = line.Value });
+                }
+                item["transcript"] = trans;
+            }
+            list.Add(item);
         }
         return list.ToString(Formatting.None);
-    }
-
-    private static bool TryParseSummary(string reply, out string summary, out string stance)
-    {
-        summary = null;
-        stance = null;
-        if (string.IsNullOrWhiteSpace(reply)) return false;
-        ReplyJson.Reply parsed = ReplyJson.Parse(reply);
-        summary = parsed.Summary;
-        stance = parsed.Stance;
-        // 模型漏了总结键、只写了一段话：把台词位当总结收下，别让这次档案白跑
-        if (string.IsNullOrWhiteSpace(summary)) summary = parsed.Line;
-        return !string.IsNullOrWhiteSpace(summary);
     }
 
     private static void AppendLine(Record record, string role, string text)
@@ -458,14 +440,12 @@ internal static class CustomerArchive
     private static string Serialize(Record record)
     {
         OceanScores ocean = record.Ocean ?? new OceanScores();
-        return new JObject
+        JObject obj = new JObject
         {
             ["name"] = record.Name,
             ["faction"] = record.Faction,
-            ["summary"] = record.Summary,
-            ["stance"] = record.Stance,
             ["archetype"] = record.Archetype,
-            ["memory"] = record.Memory,
+            ["personaLocked"] = record.PersonaLocked,
             ["ocean"] = new JObject
             {
                 ["openness"] = ocean.Openness,
@@ -479,7 +459,26 @@ internal static class CustomerArchive
             ["lastTalkDay"] = record.LastTalkDay,
             ["talks"] = record.Talks,
             ["deals"] = record.Deals,
-        }.ToString(Formatting.None);
+            ["affinity"] = record.Affinity,
+            ["affinityDay"] = record.AffinityDay,
+        };
+
+        if (record.Transcript != null && record.Transcript.Count > 0)
+        {
+            JArray trans = new JArray();
+            foreach (KeyValuePair<string, string> line in record.Transcript)
+            {
+                if (string.IsNullOrWhiteSpace(line.Value)) continue;
+                trans.Add(new JObject
+                {
+                    ["role"] = line.Key ?? "customer",
+                    ["text"] = line.Value.Trim(),
+                });
+            }
+            obj["transcript"] = trans;
+        }
+
+        return obj.ToString(Formatting.None);
     }
 
     private static bool TryApplyJson(Record record, string json)
@@ -490,11 +489,8 @@ internal static class CustomerArchive
             JObject obj = JObject.Parse(json);
             record.Name = obj.Value<string>("name") ?? record.Name;
             record.Faction = obj.Value<string>("faction") ?? record.Faction;
-            record.Summary = obj.Value<string>("summary") ?? record.Summary;
-            record.Stance = obj.Value<string>("stance") ?? record.Stance;
             record.Archetype = obj.Value<string>("archetype") ?? record.Archetype;
             record.PersonaLocked = obj.Value<bool?>("personaLocked") ?? record.PersonaLocked;
-            record.Memory = obj.Value<string>("memory") ?? record.Memory;
             JObject ocean = obj["ocean"] as JObject;
             if (ocean != null)
             {
@@ -512,10 +508,32 @@ internal static class CustomerArchive
             record.LastTalkDay = obj.Value<int?>("lastTalkDay") ?? record.LastTalkDay;
             record.Talks = obj.Value<int?>("talks") ?? record.Talks;
             record.Deals = obj.Value<int?>("deals") ?? record.Deals;
+            int? affinity = obj.Value<int?>("affinity");
+            if (affinity.HasValue) record.Affinity = Math.Max(0, Math.Min(100, affinity.Value));
+            record.AffinityDay = obj.Value<int?>("affinityDay") ?? record.AffinityDay;
+
+            record.Transcript.Clear();
+            JArray trans = obj["transcript"] as JArray;
+            if (trans != null)
+            {
+                foreach (JToken token in trans)
+                {
+                    JObject item = token as JObject;
+                    if (item == null) continue;
+                    string role = item.Value<string>("role") ?? "customer";
+                    string text = item.Value<string>("text");
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        record.Transcript.Add(new KeyValuePair<string, string>(role, text.Trim()));
+                    }
+                }
+            }
+
             return true;
         }
-        catch (JsonReaderException)
+        catch (Exception)
         {
+            // 单条档案字段损坏（类型不符/转换异常）不能中止整批加载
             return false;
         }
     }
@@ -524,20 +542,6 @@ internal static class CustomerArchive
     {
         int? value = obj.Value<int?>(key);
         return value.HasValue ? Math.Max(0, Math.Min(100, value.Value)) : 50;
-    }
-
-    // 记录数上限：超限先丢「只在存档里、本会话没谈过」的最旧一条，避免删掉正在用的条目
-    private static void TrimOverflow()
-    {
-        if (Records.Count <= MaxRecords) return;
-        List<Record> sorted = Snapshot();
-        for (int i = sorted.Count - 1; i >= 0 && Records.Count > MaxRecords; i--)
-        {
-            Record candidate = sorted[i];
-            if (candidate.Transcript.Count > 0) continue;
-            Records.Remove(candidate.Identifier);
-            RemoveAll(candidate.Identifier);
-        }
     }
 
     private static void RemoveAll(string identifier)

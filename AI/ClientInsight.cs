@@ -54,6 +54,12 @@ internal static class ClientInsight
         Log.Clear();
     }
 
+    // 读档/新档：清当日对质流水，避免跨档同一天命中
+    internal static void ResetSession()
+    {
+        Log.Clear();
+    }
+
     // 由 ClientExposeFeature 前缀调用：此刻游戏还没揭穿，逐条记下他即将当面质问的东西
     internal static void Record(StoreClient client, GameItem item, ItemFeature feature)
     {

@@ -67,6 +67,7 @@ public class ModEntry : IMod
         ClientSpeech.Setup(config, client, log);
         RegularManager.Setup(manifest.ID, log);
         CustomerArchive.Setup(manifest.ID, client, log);
+        AffinityBook.Setup(client, log);
         CreditBook.Setup(manifest.ID, log);
         // 生成节奏设置：载入持久化值；界面承载在模组的齿轮设置窗口（见 SettingsUI），
         // 不再登记进游戏原生「选项」菜单
@@ -112,6 +113,7 @@ public class ModEntry : IMod
         auth = null;
         RegularManager.Shutdown();
         CustomerArchive.Shutdown();
+        AffinityBook.Shutdown();
         CreditBook.Shutdown();
         BargainBridge.Shutdown();
         ClientInsight.Shutdown();
@@ -121,19 +123,35 @@ public class ModEntry : IMod
 
     private void OnGameLoadedLate()
     {
+        // 会话隔离：递增代数并清空上一档的静态缓存（发言包、议价轮次、对质记录、日志）
+        BumpSession();
+        ClientSpeech.ResetSession();
+        BargainBridge.ResetSession();
+        ClientInsight.ResetSession();
+        AffinityBook.ResetSession();
+        ApiLogTracker.Clear();
         // 顾客档案先加载：常客档案在 LoadAll 里要把旧的 name/faction/memory 迁移过来，
         // 必须已经能看到 talk:<id>:data
         CustomerArchive.LoadAll();
         RegularManager.LoadAll();
         CreditBook.LoadAll();
+        // 跨档/读档清空交互轮次，避免上一档同一 identifier 的聊天记录被带进新档
+        CustomerChatUI.ResetSession();
         log.Log("OnGameLoadedLate");
     }
 
     private void OnNewGameStarted(string scenarioId)
     {
+        BumpSession();
+        ClientSpeech.ResetSession();
+        BargainBridge.ResetSession();
+        ClientInsight.ResetSession();
+        AffinityBook.ResetSession();
+        ApiLogTracker.Clear();
         RegularManager.OnNewGameStarted();
         CustomerArchive.OnNewGameStarted();
         CreditBook.OnNewGameStarted();
+        CustomerChatUI.ResetSession();
         log.Log("OnNewGameStarted: " + scenarioId);
     }
 

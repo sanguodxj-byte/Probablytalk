@@ -13,6 +13,9 @@ internal sealed class MainThreadPump : MonoBehaviour
 
     public static void Enqueue(Action action)
     {
+        if (action == null) return;
+        // 没有泵就没有消费者：直接丢弃，避免队列残留到下次启用时被新泵重放旧回调
+        if (_instance == null) return;
         Queue.Enqueue(action);
     }
 
@@ -30,6 +33,8 @@ internal sealed class MainThreadPump : MonoBehaviour
         if (_instance == null) return;
         UnityEngine.Object.Destroy(_instance.gameObject);
         _instance = null;
+        // 清空残留回调：否则下次 EnsureCreated 后，新泵会执行上一会话的 Action
+        while (Queue.TryDequeue(out _)) { }
     }
 
     private void Update()

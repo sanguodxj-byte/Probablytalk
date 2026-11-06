@@ -39,6 +39,12 @@ internal static class BargainBridge
         States.Clear();
     }
 
+    // 读档/新档：清轮次与幅度，避免上一档的同日谈判记录被复用
+    internal static void ResetSession()
+    {
+        States.Clear();
+    }
+
     internal static int RoundsUsed(string identifier)
     {
         State state;
@@ -67,21 +73,26 @@ internal static class BargainBridge
 
         string tag = kind.Trim().ToLowerInvariant();
         State state = StateOf(client.identifier);
+        bool accepted;
         try
         {
             switch (tag)
             {
                 case "discount":
-                    manager.OfferDiscount(percent);
+                    accepted = manager.CanOfferDiscount();
+                    if (accepted) manager.OfferDiscount(percent);
                     break;
                 case "markup":
-                    manager.OfferMarkup(percent);
+                    accepted = manager.CanOfferMarkup();
+                    if (accepted) manager.OfferMarkup(percent);
                     break;
                 case "buyingmarkup":
-                    manager.OfferBuyingMarkup(percent);
+                    accepted = manager.CanOfferBuyingMarkup();
+                    if (accepted) manager.OfferBuyingMarkup(percent);
                     break;
                 case "buyingdiscount":
-                    manager.DemandBuyingDiscount(percent);
+                    accepted = manager.CanDemandBuyingDiscount();
+                    if (accepted) manager.DemandBuyingDiscount(percent);
                     break;
                 default:
                     // 标签无法映射到任何游戏方法：不执行（这不是判断，只是翻译失败）
@@ -95,7 +106,13 @@ internal static class BargainBridge
             return false;
         }
 
-        // 只记账，不参与任何判定
+        // 只记录事实：游戏 CanOffer* 为 false 时什么都没发生，不能把这次计入轮次/幅度
+        if (!accepted)
+        {
+            if (ModEntry.Log != null) ModEntry.Log.Log("bargain not accepted: " + tag + " " + percent + "%");
+            return false;
+        }
+
         state.Rounds++;
         if (tag == "discount" || tag == "buyingdiscount") state.DiscountApplied += percent;
         else state.MarkupApplied += percent;

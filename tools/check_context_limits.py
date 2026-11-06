@@ -30,10 +30,13 @@ SCOPE = [
     os.path.join("AI", "CustomerArchive.cs"),
     os.path.join("AI", "RegularManager.cs"),
     os.path.join("AI", "PromptBook.cs"),
+    os.path.join("AI", "StyleBook.cs"),
+    os.path.join("AI", "AffinityBook.cs"),
     os.path.join("AI", "TokenMeter.cs"),
     os.path.join("AI", "Player2Client.cs"),
     os.path.join("AI", "Client", "IAIClient.cs"),
     os.path.join("UI", "CustomerChatUI.cs"),
+    os.path.join("ModEntry.cs"),
 ]
 
 # 引用面守卫：调用这些入口的文件必须出现在 SCOPE 里，否则新增一条上下文通路会悄悄逃过检查
@@ -89,6 +92,12 @@ EXEMPT = {
         "同上：交互回复按同一份单句长度设置成形后才入历史",
     (os.path.join("AI", "CustomerArchive.cs"), "count-cap"):
         "MaxRecords 约束存档里保留的档案条目数，不裁单次请求的内容",
+    # 规范本身要求「长度口径写进提示词」，所以提示词里出现台词长度上限是合规写法，
+    # 不是给送入模型的资料封顶。真正裁内容的动作另有规则守着：任何 Truncate/Substring
+    # 都会在该文件被 char-truncate 抓到，改名叫 MaxLineChars 之外的名字也躲不掉。
+    (os.path.join("AI", "PromptBook.cs"), "size-budget"):
+        "MaxLineChars 只被插进输出契约文本（告诉模型说多长），不参与任何资料裁剪；"
+        "若它哪天被用于截断，char-truncate 会当场抓到",
 }
 
 COMMENT = re.compile(r"//.*$")

@@ -38,12 +38,13 @@ internal sealed class CustomerChatUI : MonoBehaviour
     private const float SpinnerGap = 8f;
     private bool busy;
     private Coroutine waitRoutine;
-    private Coroutine typeRoutine;
+    private Dialogue waitBubble;
     private bool waitingReply;
     private float waitDeadline;
     private int requestGeneration;
     private bool syncSendHeight;
     private CounterTalkButton counterButton;
+    private InventorTalkButton inventorButton;
 
     // 柜前空出来的起始时刻：连续空置 3 秒才判定顾客已离柜并自动关窗
     private float nullClientSince;
@@ -73,8 +74,11 @@ internal sealed class CustomerChatUI : MonoBehaviour
     {
         if (window != null && !window.IsAlive) DetachWindow();
         CloseWindowIfClientLeft();
+        // 快捷键面板条目要在加载界面就存在，不能等柜台按钮创建后才补（否则会跳变多出一项）
+        CounterTalkButton.EnsureShortcutHint();
         EnsureCounterButton();
         UpdateCounterButtonVisibility();
+        EnsureInventorButton();
         PollEnterToSend();
         SyncSendButtonHeight();
         if (waitingReply && Time.unscaledTime >= waitDeadline) OnRequestTimeout();
@@ -151,11 +155,30 @@ internal sealed class CustomerChatUI : MonoBehaviour
     }
 
     // 柜台按钮与原版铃铛一致：常驻桌面，不随顾客有无切换；
-    // 能否交谈由点击入口、热键与 tooltip 各自判定
+    // 能否交谈由点击入口、热键与 tooltip 各自判定。
+    // 博士场景例外：店铺桌面（storeInteractables）整体隐藏，店铺按钮一并消失，
+    // 由博士场景按钮（InventorTalkButton）接管——两按钮位置完全相同（世界坐标一致）
     private void UpdateCounterButtonVisibility()
     {
         if (counterButton == null) return;
-        counterButton.SetVisible(true);
+        counterButton.SetVisible(!InventorTalkButton.IsInventorScene());
+    }
+
+    // 博士场景按钮：博士工作台激活时创建（位置取店铺按钮世界坐标）；
+    // 场景舞台是常驻对象只切 SetActive，按钮创建一次即可，可见性按场景切换
+    private void EnsureInventorButton()
+    {
+        if (inventorButton == null)
+        {
+            if (!InventorTalkButton.IsInventorScene()) return;
+            MapUIManager mapUi = MapUIManager.Instance;
+            if (mapUi == null || mapUi.upgradeStoreScene == null) return;
+            inventorButton = InventorTalkButton.Create();
+            if (inventorButton == null) return;
+            inventorButton.Owner = this;
+            if (log != null) log.Log("inventor talk button created at " + inventorButton.transform.position);
+        }
+        inventorButton.SetVisible(InventorTalkButton.IsInventorScene());
     }
 
     // 柜台按钮点击入口：只有买卖顾客在柜前才打开输入
@@ -287,6 +310,15 @@ internal sealed class CustomerChatUI : MonoBehaviour
             return;
         }
 
+        // 先校验目标：identifier 为空时直接退出，不能先把 busy 置上再 return，否则面板锁死
+        string identifier = boundClient.identifier;
+        if (string.IsNullOrEmpty(identifier))
+        {
+            if (log != null) log.Warning("customer chat send failed: empty identifier");
+            input.text = text;
+            return;
+        }
+
         // 玩家这一句就是管线入口：先领当日额度，到顶或上限为 0 时不发请求、原文留在输入框里
         if (!ClientSpeech.TryConsumeRequest())
         {
@@ -299,29 +331,43 @@ internal sealed class CustomerChatUI : MonoBehaviour
         sendButton?.SetInteractable(false);
         inputElement?.SetInteractable(false);
 
-        string identifier = boundClient.identifier;
-        List<KeyValuePair<string, string>> turns = GetTurns(identifier);
-        turns.Add(new KeyValuePair<string, string>("user", text));
-
-        // 产生对话即入档：名字与势力一并带上，名册里不必再回查游戏对象
-        CustomerArchive.RecordTalk(identifier, boundClient.displayName, boundClient.clientFaction, null);
-        CustomerArchive.AppendLine(identifier, "player", text);
-
-        string systemPrompt = ClientSpeech.InteractiveSystemPrompt(boundClient)
-            + "\n" + ClientSpeech.InteractiveContext(boundClient);
-        int generation = ++requestGeneration;
-        StartWaitingBubble(boundClient.displayName);
-        client.Chat(systemPrompt, turns, (ok, reply) =>
+        try
         {
-            if (generation != requestGeneration) return;
-            OnChatResult(identifier, ok, reply);
-        });
+            List<KeyValuePair<string, string>> turns = GetTurns(identifier);
+            turns.Add(new KeyValuePair<string, string>("user", text));
+
+            // 产生对话即入档：名字与势力一并带上，名册里不必再回查游戏对象
+            CustomerArchive.RecordTalk(identifier, boundClient.displayName, boundClient.clientFaction, null);
+            CustomerArchive.AppendLine(identifier, "player", text);
+
+            string systemPrompt = ClientSpeech.InteractiveSystemPrompt(boundClient)
+                + "\n" + ClientSpeech.InteractiveContext(boundClient);
+            int generation = ++requestGeneration;
+            StartWaitingBubble(boundClient.displayName);
+            // 发送后立即关窗：请求在后台跑，玩家可以去做别的事
+            CloseWindow();
+            client.Chat(systemPrompt, turns, ClientSpeech.InteractiveTail(boundClient), (ok, reply) =>
+            {
+                if (generation != requestGeneration) return;
+                OnChatResult(identifier, ok, reply);
+            });
+        }
+        catch (Exception ex)
+        {
+            // 上下文构建/入档任何一步抛异常，都必须解除 busy 并关窗，否则 modal 会锁死世界点击
+            if (log != null) log.Warning("customer chat send failed: " + ex.Message);
+            busy = false;
+            sendButton?.SetInteractable(true);
+            inputElement?.SetInteractable(true);
+            CloseWindow();
+        }
     }
 
     private void OnChatResult(string identifier, bool ok, string reply)
     {
         StopWaitingBubble();
         busy = false;
+        bool refused = false;
         sendButton?.SetInteractable(true);
         inputElement?.SetInteractable(true);
 
@@ -357,9 +403,9 @@ internal sealed class CustomerChatUI : MonoBehaviour
             Dialogue before = DialogUIManager.Instance != null ? DialogUIManager.Instance.GetCurrentDialog() : null;
             CloseWindow();
 
-            // 交易动作：模型把玩家这句话解析成 bargain（议价）与 credit（赊账/收账）
-            ApplyReplyEffects(parsed);
-            if (log != null) log.Log("deal actions applied");
+            // 交易动作：bargain（议价）与 credit（赊账）；refuse 只记标记，真正离店放到 finally
+            refused = ApplyReplyEffects(parsed);
+            if (log != null) log.Log("deal actions applied, refused=" + refused);
 
             Dialogue after = DialogUIManager.Instance != null ? DialogUIManager.Instance.GetCurrentDialog() : null;
             // 游戏结算对话（接受/拒绝/走人）会抢前台。已激活链路的顾客，
@@ -369,7 +415,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
                 if (!string.IsNullOrWhiteSpace(text) && boundClient != null
                     && CustomerArchive.HasTalked(identifier))
                 {
-                    after.SetText(boundClient.displayName, text);
+                    after.SetText(SafeName(boundClient.displayName), text);
                     if (DialogUIManager.Instance != null) DialogUIManager.Instance.DisplayClientText(after);
                     if (log != null) log.Log("game dialogue text replaced by mod line");
                 }
@@ -386,7 +432,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
                 if (log != null) log.Log("customer reply had no spoken line, bubble skipped");
                 return;
             }
-            ShowLineTyped(boundClient.displayName, text);
+            ShowLine(boundClient.displayName, text);
         }
         catch (Exception ex)
         {
@@ -394,6 +440,8 @@ internal sealed class CustomerChatUI : MonoBehaviour
         }
         finally
         {
+            // 顾客拒绝并离店：等台词、结算对话都处理完再走游戏自己的离店流程
+            if (refused) DismissRefused(identifier);
             CloseWindow();
         }
     }
@@ -402,7 +450,7 @@ internal sealed class CustomerChatUI : MonoBehaviour
     private void StartWaitingBubble(string name)
     {
         waitingReply = true;
-        waitDeadline = Time.unscaledTime + 15f;
+        waitDeadline = Time.unscaledTime + Mathf.Max(1, SpeechSettings.BubbleTimeoutSeconds);
         if (waitRoutine != null) StopCoroutine(waitRoutine);
         waitRoutine = StartCoroutine(WaitDots(name));
     }
@@ -415,6 +463,12 @@ internal sealed class CustomerChatUI : MonoBehaviour
             StopCoroutine(waitRoutine);
             waitRoutine = null;
         }
+        // 回包解析不出台词时（模型没按格式回），协程停了但省略号还挂在屏上像卡死。
+        // 只收我们自己那条：游戏刚弹的结算台词不能一起藏掉。
+        // waitBubble 不在这里清：HideBubbles 只藏画面，不解除 currentDialog，
+        // ShowLine 还要靠这个引用判断"挡在前面的到底是不是我们自己那条占位"
+        DialogUIManager ui = DialogUIManager.Instance;
+        if (ui != null && waitBubble != null && ReferenceEquals(ui.currentDialog, waitBubble)) ui.HideBubbles();
     }
 
     private IEnumerator WaitDots(string name)
@@ -426,14 +480,15 @@ internal sealed class CustomerChatUI : MonoBehaviour
             yield break;
         }
         Dialogue bubble = new Dialogue();
-        bubble.SetText(name, ".");
+        bubble.SetText(SafeName(name), ".");
         ui.StartDialogue(bubble);
-        TextBubble view = ui.clientBubble;
-        if (view != null && view.typewriter != null) view.typewriter.StopShowingText();
+        waitBubble = bubble;
         int dots = 1;
         while (waitingReply)
         {
-            if (view != null && view.textfield != null) view.textfield.text = new string('.', dots);
+            // 期间游戏可能顶掉气泡（店员台词、结算等）：只往属于自己那条上打字
+            if (ui != DialogUIManager.Instance || ui.currentDialog != bubble) break;
+            ui.PlayClientSingleText(new string('.', dots));
             dots = dots % 15 + 1;
             yield return new WaitForSecondsRealtime(0.5f);
         }
@@ -454,47 +509,47 @@ internal sealed class CustomerChatUI : MonoBehaviour
             StoreUIManager.Instance.Notify(Loc("chat_timeout", "AI response timed out"), "sec");
         }
         string name = boundClient != null ? boundClient.displayName : null;
-        ShowLineTyped(name, Loc("chat_timeout_reply", "你说什么？我没听清。"));
+        ShowLine(name, Loc("chat_timeout_reply", "你说什么？我没听清。"));
         if (log != null) log.Warning("customer chat timed out after 15s");
     }
 
-    // 逐字显示：每秒 2 个字（每 0.5 秒 1 个）
-    private void ShowLineTyped(string name, string text)
+    // 台词直接交给原版气泡：DialogUIManager.StartDialogue → DisplayClientText → typewriter.ShowText(全文)，
+    // 打字速度、打字机开关、点击跳过全部沿用玩家自己的设置。
+    // 之前这里自己起协程写 textfield.text，还先 StopShowingText()——两套打字机抢同一个 TMP，
+    // 结果就是气泡显示不全提前收。
+    private void ShowLine(string name, string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
-        DialogUIManager ui = DialogUIManager.Instance;
-        if (ui == null) return;
-        Dialogue bubble = new Dialogue();
-        bubble.SetText(name, text);
-        ui.StartDialogue(bubble);
-        if (typeRoutine != null) StopCoroutine(typeRoutine);
-        typeRoutine = StartCoroutine(TypeLine(ui, text));
-    }
-
-    private IEnumerator TypeLine(DialogUIManager ui, string text)
-    {
-        TextBubble view = ui.clientBubble;
-        if (view != null && view.typewriter != null) view.typewriter.StopShowingText();
-        int shown = 0;
-        while (shown < text.Length)
+        if (string.IsNullOrWhiteSpace(text))
         {
-            shown++;
-            if (ui != DialogUIManager.Instance)
-            {
-                typeRoutine = null;
-                yield break;
-            }
-            if (view != null && view.textfield != null) view.textfield.text = text.Substring(0, shown);
-            yield return new WaitForSecondsRealtime(0.5f);
+            if (log != null) log.Log("bubble line empty, nothing to type");
+            return;
         }
-        typeRoutine = null;
+        DialogUIManager ui = DialogUIManager.Instance;
+        if (ui == null)
+        {
+            if (log != null) log.Warning("bubble line dropped: dialog ui missing");
+            return;
+        }
+        Dialogue bubble = new Dialogue();
+        bubble.SetText(SafeName(name), text);
+        // StartDialogue 在「当前对话优先级 >= 新对话优先级」时直接 return false。
+        // 占位省略号与回包都是默认 priority 0，于是回包被我们自己那条占位气泡挡掉、静默丢弃。
+        // 只有挡在前面的确实是我们这条占位时才强制顶替，游戏自己弹的对话仍然按优先级让路
+        Dialogue current = ui.GetCurrentDialog();
+        bool forced = current != null && ReferenceEquals(current, waitBubble);
+        ui.StartDialogue(bubble, forced);
+        waitBubble = null;
+        // 成功路径以前没有日志，回包到底进没进气泡只能靠猜
+        if (log != null) log.Log("bubble typed via vanilla typewriter: " + text.Length + " chars"
+            + (forced ? " (replaced own waiting bubble)" : string.Empty));
     }
 
     // 回包是一个 JSON 对象（台词 + 改价 + 欠账 + 记忆）。这里只把中文动作词翻译成游戏接口，
     // 不做夹取、不校验方向、不纠正；游戏自己决定接受还是拒绝
-    private void ApplyReplyEffects(ReplyJson.Reply parsed)
+    // 返回 true 表示顾客要求离开：离店要等台词与结算都处理完再执行，避免提前销毁顾客对象
+    private bool ApplyReplyEffects(ReplyJson.Reply parsed)
     {
-        if (parsed == null || boundClient == null) return;
+        if (parsed == null || boundClient == null) return false;
 
         // 三段各自隔离：任何一段抛异常，都不该连带影响另外两段与后续播报
         try
@@ -522,39 +577,46 @@ internal sealed class CustomerChatUI : MonoBehaviour
             if (log != null) log.Warning("customer chat bargain failed: " + ex.Message);
         }
 
-        // 记忆摘要：写进常客档案，下次预生成的开场白会带上
-        try
-        {
-            if (!string.IsNullOrWhiteSpace(parsed.Memory))
-            {
-                RegularManager.OnMemoryProduced(boundClient.identifier, parsed.Memory);
-            }
-        }
-        catch (Exception ex)
-        {
-            if (log != null) log.Warning("customer chat memory failed: " + ex.Message);
-        }
-
+        // 记忆不再由模型单独产出：完整往来已在 CustomerArchive.Transcript 中
         try
         {
             string credit = parsed.Credit != null ? parsed.Credit.Trim().ToLowerInvariant() : null;
+            // 收账是玩家的操作，顾客不会替玩家要钱：这里只处理顾客自己请求赊账
             if (credit == "lend")
             {
                 int amount = CreditBook.Stage(boundClient, 0);
                 if (amount > 0) CustomerArchive.AppendLine(boundClient.identifier, "credit", "赊账 " + amount);
-            }
-            else if (credit == "collect")
-            {
-                int amount = CreditBook.Collect(boundClient);
-                if (amount > 0) CustomerArchive.AppendLine(boundClient.identifier, "credit", "还款 " + amount);
             }
         }
         catch (Exception ex)
         {
             if (log != null) log.Warning("customer chat credit failed: " + ex.Message);
         }
+
+        return string.Equals(parsed.Move, "refuse", StringComparison.OrdinalIgnoreCase);
     }
 
+
+    // 顾客自己选择离开：只走游戏原版离店流程，账本丢弃、档案与好感评估照常触发
+    private void DismissRefused(string identifier)
+    {
+        try
+        {
+            PlayerStore store = PlayerStore.Instance;
+            if (store == null) return;
+            if (!store.CanDismissCurrentClient())
+            {
+                if (log != null) log.Log("refuse skipped: dismiss not allowed");
+                return;
+            }
+            if (log != null) log.Log("customer refused and left: " + identifier);
+            store.DismissCurrentClient(callNextWhenPossible: false);
+        }
+        catch (Exception ex)
+        {
+            if (log != null) log.Warning("customer refuse dismiss failed: " + ex.Message);
+        }
+    }
 
     // 关窗必须绝对可靠：这个面板是 modal，销毁失败就等于把整个世界点击锁死。
     // 因此销毁本身异常也要吞掉并把引用清空，看门狗下一帧才不会重复踩同一个坑
@@ -594,11 +656,44 @@ internal sealed class CustomerChatUI : MonoBehaviour
         return string.IsNullOrEmpty(value) || value == key ? fallback : value;
     }
 
+    // 气泡标题兜底：游戏在某些生成路径下 displayName 为空，别写出一个没有名字的对话
+    private string SafeName(string name)
+    {
+        if (!string.IsNullOrWhiteSpace(name)) return name;
+        return Loc("chat_customer_name", "Customer");
+    }
+
+    // 读档/开新档时清空交互轮次：Turns 是静态字典，不清会把上一档的记录带进新档
+    // 读档/新档：清轮次、停止等待/打字协程，丢弃在途请求，避免旧档回包落进新档
+    internal static void ResetSession()
+    {
+        Turns.Clear();
+        if (Instance != null) Instance.ResetLocalSession();
+    }
+
+    private void ResetLocalSession()
+    {
+        StopWaitingBubble();
+        waitBubble = null;
+        requestGeneration++;
+        boundClient = null;
+        if (window != null && window.IsAlive) CloseWindow();
+    }
+
     private static List<KeyValuePair<string, string>> GetTurns(string identifier)
     {
         if (!Turns.TryGetValue(identifier, out List<KeyValuePair<string, string>> turns))
         {
             turns = new List<KeyValuePair<string, string>>();
+            List<KeyValuePair<string, string>> transcript = CustomerArchive.GetTranscript(identifier);
+            if (transcript != null)
+            {
+                foreach (KeyValuePair<string, string> item in transcript)
+                {
+                    if (item.Key == "player") turns.Add(new KeyValuePair<string, string>("user", item.Value));
+                    else if (item.Key == "customer") turns.Add(new KeyValuePair<string, string>("assistant", item.Value));
+                }
+            }
             Turns[identifier] = turns;
         }
         return turns;
@@ -688,18 +783,28 @@ internal sealed class CustomerChatUI : MonoBehaviour
         return true;
     }
 
-    // 桥接测试通道：直接以文本走发送管线
-    public static void SendFromBridge(string text)
+    // 桥接测试通道：直接以文本走发送管线。返回 null=真投递了，否则返回没投递的原因。
+    // 之前这里静默 return，桥照样报 dispatched=true，于是"给导师说话"看起来成功了，
+    // 屏幕上其实是原版台词——投递与否必须由这条返回值说，不能让调用方猜
+    public static string SendFromBridge(string text)
     {
-        if (Instance == null || string.IsNullOrWhiteSpace(text)) return;
+        if (Instance == null) return "chat window not ready";
+        if (string.IsNullOrWhiteSpace(text)) return "empty text";
         PlayerStore store = PlayerStore.Instance;
         StoreClient blueprint = store != null && store.currentClientInstance != null
             ? store.currentClientInstance.GetClientBlueprint()
             : null;
-        if (!ClientSpeech.IsTalkCustomer(blueprint)) return;
+        if (!ClientSpeech.IsTalkCustomer(blueprint))
+        {
+            return blueprint == null
+                ? "no client at counter"
+                : "not a trade customer (intent " + blueprint.clientIntent
+                    + (blueprint.isWanted ? ", wanted" : string.Empty) + ")";
+        }
         Instance.OpenInput(blueprint);
         TMP_InputField input = Instance.inputElement != null ? Instance.inputElement.input : null;
         if (input != null) input.text = text;
         Instance.Send();
+        return null;
     }
 }

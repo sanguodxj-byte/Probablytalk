@@ -72,6 +72,14 @@ internal static class ClientSpeech
         _budgetUsed = 0;
     }
 
+    // 读档/新档：清当日发言包与额度，避免上一档的同日缓存被复用
+    internal static void ResetSession()
+    {
+        Packs.Clear();
+        _budgetDay = -1;
+        _budgetUsed = 0;
+    }
+
     // 当日名单定型时全栈扫描：VeryLate 钩子在 ClientGenCheck 按 identifier 去重之后，栈内即当日最终名单
     public static void OnDayStackReady(StoreClientManager manager)
     {
@@ -187,21 +195,20 @@ internal static class ClientSpeech
 
         string systemPrompt = SpeechSystemPrompt;
         string userInput = "按资料写他今天进门的发言。";
-        string contextJson = ContextBrief.Render(StoreContext.Build(client, day), "他刚走进店门。");
+        string contextJson = ContextBrief.Render(
+            StoreContext.Build(client, day, CustomerArchive.GetTranscript(client.identifier)), "他刚走进店门。");
         string identifier = client.identifier;
-        _client.Chat(systemPrompt, userInput, contextJson, (ok, reply) =>
+        int session = ModEntry.SessionGeneration;
+        _client.Chat(systemPrompt, userInput, contextJson, SpeechTail(client), (ok, reply) =>
         {
+            // 读档/新档后旧请求的回包必须丢弃，否则会写进新档的发言包缓存
+            if (session != ModEntry.SessionGeneration) return;
             SpeechPack pack = new SpeechPack { Day = day, OriginalLine = originalLine };
-            if (ok && TryParseReply(reply, out string opening, out string chat, out string memory))
+            if (ok && TryParseReply(reply, out string opening, out string chat))
             {
                 pack.State = PackState.Success;
                 pack.Opening = opening;
                 pack.Chat = chat;
-                // 预生成不算「玩家聊过」：对话次数只记主动发起的柜台对话
-                if (!string.IsNullOrWhiteSpace(memory))
-                {
-                    RegularManager.OnMemoryProduced(identifier, memory);
-                }
             }
             else
             {
@@ -329,16 +336,27 @@ internal static class ClientSpeech
     internal static string SpeechSystemPrompt =>
         Prompt + Environment.NewLine + PromptBook.SpeechPrompt();
 
+    // 输出契约与文风作为最后一条消息发出，不混进 system；文风按这位顾客现算
+    internal static string SpeechTail(StoreClient client) => PromptBook.SpeechTail(client);
+
     // 议价方向由游戏状态判定后传进提示词：只列出这一单可用的标记，模型不做方向选择
     internal static string InteractiveSystemPrompt(StoreClient client) =>
-        Prompt + Environment.NewLine + PromptBook.InteractivePrompt(BargainBridge.DirectionOf(client));
+        PromptBook.IsInventor(client)
+            ? PromptBook.Compose(PromptBook.InventorInstruction())
+            : Prompt + Environment.NewLine + PromptBook.InteractivePrompt(BargainBridge.DirectionOf(client));
+
+    internal static string InteractiveTail(StoreClient client) =>
+        PromptBook.InteractiveTail(BargainBridge.DirectionOf(client), client);
 
     internal static int InteractiveLineLength => LineLength;
 
     // 交互对话上下文 = 分区上下文：往来记录已经作为 messages 逐条发出，不在这里复制第二份
     internal static string InteractiveContext(StoreClient client)
     {
-        return ContextBrief.Render(StoreContext.Build(client, CurrentDay()), "玩家在柜台后跟他说话。");
+        string scene = PromptBook.IsInventor(client)
+            ? "玩家在杰克逊博士的工作台前跟他说话。"
+            : "玩家在柜台后跟他说话。";
+        return ContextBrief.Render(StoreContext.Build(client, CurrentDay()), scene);
     }
 
     // 顾客资格：只有来买卖的才算；通缉客与剧情拜访不算
@@ -347,13 +365,12 @@ internal static class ClientSpeech
         return client != null && !client.isWanted && TalkIntents.Contains(client.clientIntent);
     }
 
-    // 只认 JSON 的 opening/chat/memory 三字段，memory 可缺省；解析失败返回 false，调用方静默回退原版
-    private static bool TryParseReply(string reply, out string opening, out string chat, out string memory)
+    // 只认 JSON 的 opening/chat 两字段；解析失败返回 false，调用方静默回退原版
+    private static bool TryParseReply(string reply, out string opening, out string chat)
     {
         ReplyJson.Reply parsed = ReplyJson.Parse(reply);
         opening = parsed.Opening;
         chat = parsed.Chat;
-        memory = parsed.Memory;
         return !string.IsNullOrWhiteSpace(opening);
     }
 

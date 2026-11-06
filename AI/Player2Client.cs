@@ -81,6 +81,9 @@ public sealed class Player2Client
 
     public bool HasCloudKey => !string.IsNullOrWhiteSpace(_config.P2Key);
 
+    // 自备端点（BYO）配置完整时也算可用通道，否则只配 BYO 的玩家会被 IsOnline 拦死
+    private bool HasFallback => _config != null && _config.HasFallback;
+
     // 仅在组合在线态翻转时触发，回调已切到 Unity 主线程
     public event Action<bool> OnlineChanged;
 
@@ -133,33 +136,33 @@ public sealed class Player2Client
     // 供连接窗口在授权成功写入 P2 Key 后调用：重算组合在线态并触发在线事件
     public void RefreshOnlineState()
     {
-        SetOnline(_desktopOnline || HasCloudKey);
+        SetOnline(_desktopOnline || HasCloudKey || HasFallback);
     }
 
-    // chat(系统提示, 用户输入, 上下文JSON)：异步返回 choices[0].message.content，失败返回 null（原因见 LastError）。
+    // chat(系统提示, 用户输入, 上下文JSON, 输出契约)：异步返回 choices[0].message.content，失败返回 null（原因见 LastError）。
     // 整体切到线程池执行，调用方在主线程 await 也不阻塞帧。
-    public Task<string> ChatAsync(string systemPrompt, string userInput, string contextJson)
+    public Task<string> ChatAsync(string systemPrompt, string userInput, string contextJson, string tail)
     {
-        return Task.Run(() => ChatCoreAsync(BuildMessages(systemPrompt, userInput, contextJson)));
+        return Task.Run(() => ChatCoreAsync(BuildMessages(systemPrompt, userInput, contextJson, tail)));
     }
 
     // 多轮版：turns 为按发生顺序排列的完整对话历史（含本轮用户输入），Key 为角色（"user"/"assistant"），
     // Value 为该轮文本；systemPrompt 置顶。其余行为与三参版一致。
-    public Task<string> ChatAsync(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns)
+    public Task<string> ChatAsync(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns, string tail)
     {
-        return Task.Run(() => ChatCoreAsync(BuildMessages(systemPrompt, turns)));
+        return Task.Run(() => ChatCoreAsync(BuildMessages(systemPrompt, turns, tail)));
     }
 
     // 回调版：结果经 MainThreadPump 在 Unity 主线程递送；ok=false 时 text 为 null
-    public void Chat(string systemPrompt, string userInput, string contextJson, Action<bool, string> onResult)
+    public void Chat(string systemPrompt, string userInput, string contextJson, string tail, Action<bool, string> onResult)
     {
-        Deliver(ChatAsync(systemPrompt, userInput, contextJson), onResult);
+        Deliver(ChatAsync(systemPrompt, userInput, contextJson, tail), onResult);
     }
 
     // 多轮回调版
-    public void Chat(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns, Action<bool, string> onResult)
+    public void Chat(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns, string tail, Action<bool, string> onResult)
     {
-        Deliver(ChatAsync(systemPrompt, turns), onResult);
+        Deliver(ChatAsync(systemPrompt, turns, tail), onResult);
     }
 
     // 供连接窗口的「检测本地桌面端」按钮：强制重探测并回主线程返回结果说明
@@ -411,9 +414,10 @@ public sealed class Player2Client
         }
     }
 
-    // 三参入口的消息序列：system 置顶，contextJson 非空时作为独立 user 消息插在用户输入之前，
-    // 不拼接任何标签文字。
-    private static JArray BuildMessages(string systemPrompt, string userInput, string contextJson)
+    // 消息序列：system 置顶，contextJson 非空时作为独立 user 消息插在用户输入之前，不拼接任何标签文字。
+    // tail（输出契约）永远放在最后一条：模型生成前读到的最后一句就是格式要求，
+    // 塞在成坨资料前面时会被忽略，回包退化成散文
+    private static JArray BuildMessages(string systemPrompt, string userInput, string contextJson, string tail)
     {
         var messages = new JArray();
         if (!string.IsNullOrEmpty(systemPrompt))
@@ -425,11 +429,32 @@ public sealed class Player2Client
             messages.Add(new JObject { ["role"] = "user", ["content"] = contextJson });
         }
         messages.Add(new JObject { ["role"] = "user", ["content"] = userInput ?? string.Empty });
+        AppendTail(messages, tail);
         return messages;
     }
 
+    private static void AppendTail(JArray messages, string tail)
+    {
+        if (string.IsNullOrEmpty(tail)) return;
+        // 尾注（文风 + 输出格式）并进最后一条 user 消息的末尾，不另起一轮：
+        // 社区那条"越靠末尾影响越大"的做法成立，前提是它跟要回应的刺激在同一轮里。
+        // 单开一轮时最后一条消息变成指令本身，模型会去回答指令卡，
+        // 产出一句不接任何话头、却满足格式的台词
+        if (messages.Count > 0)
+        {
+            JObject last = messages[messages.Count - 1] as JObject;
+            if (last != null && (string)last["role"] == "user")
+            {
+                string content = (string)last["content"] ?? string.Empty;
+                last["content"] = content + "\n\n" + tail;
+                return;
+            }
+        }
+        messages.Add(new JObject { ["role"] = "user", ["content"] = tail });
+    }
+
     // 多轮入口的消息序列：system 置顶后按发生顺序追加对话轮，角色原样保留。
-    private static JArray BuildMessages(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns)
+    private static JArray BuildMessages(string systemPrompt, IReadOnlyList<KeyValuePair<string, string>> turns, string tail)
     {
         var messages = new JArray();
         if (!string.IsNullOrEmpty(systemPrompt))
@@ -443,6 +468,7 @@ public sealed class Player2Client
                 messages.Add(new JObject { ["role"] = turn.Key, ["content"] = turn.Value ?? string.Empty });
             }
         }
+        AppendTail(messages, tail);
         return messages;
     }
 
@@ -674,7 +700,7 @@ public sealed class Player2Client
         {
             _desktopOnline = desktopOnline;
         }
-        SetOnline(desktopOnline || HasCloudKey);
+        SetOnline(desktopOnline || HasCloudKey || HasFallback);
     }
 
     private void SetOnline(bool online)

@@ -13,8 +13,6 @@ internal static class CustomerRosterUI
 {
     private const string WindowId = "probablytalk_roster";
     private const string DetailWindowId = "probablytalk_roster_detail";
-    private const int MaxSummaryChars = 180;
-    private const int MaxTranscriptRows = 12;
 
     private static CustomUIWindow _window;
     private static CustomUIWindow _detail;
@@ -73,11 +71,27 @@ internal static class CustomerRosterUI
         builder.BeginRow(6f, TextAnchor.MiddleLeft);
         builder.AddButton(title, () => OpenDetail(modId, record), null);
         builder.End();
-        if (!string.IsNullOrWhiteSpace(record.Summary))
+        AddAffinity(builder, modId, record);
+        if (record.Transcript != null && record.Transcript.Count > 0)
         {
-            builder.AddLabel(TextLimit.Truncate(record.Summary, MaxSummaryChars));
+            KeyValuePair<string, string> last = record.Transcript[record.Transcript.Count - 1];
+            builder.AddLabel(last.Value);
         }
         builder.AddSpace(2f);
+    }
+
+    // 好感度只对常客有意义：非常客显示破折号，常客显示档位词、数值与 0-100 进度条
+    private static void AddAffinity(CustomUIBuilder builder, string modId, CustomerArchive.Record record)
+    {
+        string label = Loc(modId, "affinity_label", "Affinity");
+        if (!RegularManager.IsRegular(record.Identifier))
+        {
+            builder.AddLabel(label + "：" + Loc(modId, "affinity_none", "—"));
+            return;
+        }
+        int value = Math.Max(0, Math.Min(100, record.Affinity));
+        builder.AddLabel(label + " " + value + "  ·  " + AffinityBook.LabelOf(record.Identifier));
+        builder.AddProgressBar(value / 100f);
     }
 
     private static void OpenDetail(string modId, CustomerArchive.Record record)
@@ -113,21 +127,10 @@ internal static class CustomerRosterUI
                     + Loc(modId, "roster_ocean_a", "Agree") + " " + record.Ocean.Agreeableness + " · "
                     + Loc(modId, "roster_ocean_n", "Neuro") + " " + record.Ocean.Neuroticism);
             }
-            builder.AddHeader(Loc(modId, "roster_summary", "Summary"), "summary_header");
-            string summary = string.IsNullOrWhiteSpace(record.Summary)
-                ? Loc(modId, "roster_no_summary", "The summary is written after the customer leaves.")
-                : record.Summary;
-            builder.AddLabel(summary);
-            if (!string.IsNullOrWhiteSpace(record.Stance))
-            {
-                builder.AddHeader(Loc(modId, "roster_stance", "Stance"), "stance_header");
-                builder.AddLabel(record.Stance);
-            }
-            if (record.Transcript.Count > 0)
+            if (record.Transcript != null && record.Transcript.Count > 0)
             {
                 builder.AddHeader(Loc(modId, "roster_transcript", "This Visit"), "transcript_header");
-                int start = Mathf.Max(0, record.Transcript.Count - MaxTranscriptRows);
-                for (int i = start; i < record.Transcript.Count; i++)
+                for (int i = 0; i < record.Transcript.Count; i++)
                 {
                     KeyValuePair<string, string> line = record.Transcript[i];
                     string who;

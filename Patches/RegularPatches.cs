@@ -13,6 +13,8 @@ internal static class RegularPatches
     private static void AfterStartMainDialogue(StoreClient __instance)
     {
         RegularManager.OnClientArrived(__instance != null ? __instance.identifier : null);
+        // 顾客到柜：常客且方向为「顾客卖货」时挂好感度价格标签（其余方向一律不动）
+        AffinityBook.OnClientArrived(__instance);
     }
 
     [HarmonyPatch(typeof(StoreClient), "CompleteBusiness")]

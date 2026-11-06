@@ -25,8 +25,8 @@ internal static class StoreContext
         // 之后跨天、跨存档都不变。放在这里是因为预生成、柜台对话、离店总结三条路都经过 Build
         CustomerArchive.EnsurePersona(client);
         AddClient(context, client, transcript);
-        AddClientGoods(context);
-        AddFront(context);
+        AddClientGoods(context, client);
+        AddFront(context, client);
         AddDeal(context, client);
         RegularManager.AppendSpeechContext(context, client.identifier);
         return context;
@@ -127,33 +127,32 @@ internal static class StoreContext
         {
             body["originalLine"] = line.Trim();
         }
-        // 上一次离店的总结回灌：这是「对话影响以后对话」的闭环落点
-        string summary, stance;
-        int lastDay;
-        if (CustomerArchive.TryGetPastVisit(client.identifier, out summary, out stance, out lastDay))
-        {
-            JObject past = new JObject
-            {
-                ["summary"] = summary,
-                ["day"] = lastDay,
-            };
-            if (!string.IsNullOrWhiteSpace(stance)) past["stance"] = stance;
-            body["pastVisit"] = past;
-        }
         body["chatty"] = CustomerArchive.ChattyOf(client.identifier);
-        // 原型名 + 大五人格五项原始分数：原型名给一个整体印象，分数给可执行的倾向，
-        // 两者一起下发，模型不必从分数反推「这是个什么货色」
-        string archetype = CustomerArchive.ArchetypeOf(client.identifier);
-        if (!string.IsNullOrWhiteSpace(archetype)) body["archetype"] = archetype;
-        CustomerArchive.OceanScores ocean = CustomerArchive.OceanOf(client.identifier);
-        body["ocean"] = new JObject
+        // 博士是固定人设：不 roll 原型与大五人格，也不下发——那套是给普通顾客现拼性格用的，
+        // 会跟 InventorInstruction 的"冷淡、精确、不寒暄"打架。identity 也改成博士本人
+        if (PromptBook.IsInventor(client))
         {
-            ["openness"] = ocean.Openness,
-            ["conscientiousness"] = ocean.Conscientiousness,
-            ["extraversion"] = ocean.Extraversion,
-            ["agreeableness"] = ocean.Agreeableness,
-            ["neuroticism"] = ocean.Neuroticism,
-        };
+            body["identity"] = client.displayName;
+        }
+        else
+        {
+            // 原型名 + 大五人格五项原始分数：原型名给一个整体印象，分数给可执行的倾向，
+            // 两者一起下发，模型不必从分数反推「这是个什么货色」
+            string archetype = CustomerArchive.ArchetypeOf(client.identifier);
+            if (!string.IsNullOrWhiteSpace(archetype)) body["archetype"] = archetype;
+            CustomerArchive.OceanScores ocean = CustomerArchive.OceanOf(client.identifier);
+            if (ocean != null)
+            {
+                body["ocean"] = new JObject
+                {
+                    ["openness"] = ocean.Openness,
+                    ["conscientiousness"] = ocean.Conscientiousness,
+                    ["extraversion"] = ocean.Extraversion,
+                    ["agreeableness"] = ocean.Agreeableness,
+                    ["neuroticism"] = ocean.Neuroticism,
+                };
+            }
+        }
         AddTranscript(body, transcript);
         AddPriceBias(body, client);
         AddStanding(body, client);
@@ -166,10 +165,13 @@ internal static class StoreContext
         context["client"] = body;
     }
 
-    // 顾客自带货物：柜台上（前区）归属非玩家的物品就是本轮他拿来卖的东西。
-    // 只取 frontInvinvElement——后区（柜台下）玩家看不见，也不该进入上下文
-    private static void AddClientGoods(JObject context)
+    // 顾客自带货物：柜台上（前区）归属非玩家的物品就是他拿来卖的东西。
+    // 必须先问意图：游戏自己只在 DismissCurrentClient 与跨天时清掉无主货，而"来买"的顾客（BUY）
+    // 根本不可能在卖东西——把台面上的无主货报给他，他就会把别人的遗留物当成自己的货开口就卖
+    // 博士货架同样全量下发：内容不设上限是既定决策，体积代价交给调试面板的 token 观测
+    private static void AddClientGoods(JObject context, StoreClient client)
     {
+        if (!client.IsClientSelling()) return;
         EmporiumEntry entry = EmporiumEntry.Instance;
         if (entry == null) return;
         GameGridInventory front = entry.frontInvinvElement;
@@ -183,24 +185,28 @@ internal static class StoreContext
     }
 
     // 柜台与招牌：柜台只取前区（摆在柜台上、顾客看得见）里玩家自有的在售品，
-    // 后区（柜台下）不进入上下文；招牌取展示柜（临街可见的陈列）
-    private static void AddFront(JObject context)
+    // 后区（柜台下）不进入上下文；招牌取展示柜（临街可见的陈列，路过就看得见，不看意图）
+    private static void AddFront(JObject context, StoreClient client)
     {
         EmporiumEntry entry = EmporiumEntry.Instance;
         if (entry == null) return;
 
-        List<GameItem> counter = new List<GameItem>();
-        GameGridInventory front = entry.frontInvinvElement;
-        if (front != null && front.childItems != null)
+        // 只来卖的顾客不该收到"你可以买"——那会让他开口询价，而这单根本没有买的方向
+        if (client.IsClientBuying())
         {
-            foreach (GameItem item in front.childItems)
+            List<GameItem> counter = new List<GameItem>();
+            GameGridInventory front = entry.frontInvinvElement;
+            if (front != null && front.childItems != null)
             {
-                if (item == null) continue;
-                if (!GeneralHelper.IsItemOwned(item)) continue;
-                counter.Add(item);
+                foreach (GameItem item in front.childItems)
+                {
+                    if (item == null) continue;
+                    if (!GeneralHelper.IsItemOwned(item)) continue;
+                    counter.Add(item);
+                }
             }
+            if (counter.Count > 0) context["counter"] = CountedItems(counter);
         }
-        if (counter.Count > 0) context["counter"] = CountedItems(counter);
 
         GameGridInventory showcase = entry.showcaseElement;
         if (showcase != null && showcase.childItems != null && showcase.childItems.Count > 0)
@@ -242,6 +248,17 @@ internal static class StoreContext
             ["discountApplied"] = BargainBridge.DiscountSoFar(identifier),
             ["markupApplied"] = BargainBridge.MarkupSoFar(identifier),
         };
+        // 玩家用议价面板当场改的价与模型请求走的是同一个 BargainUIManager，所以这里读游戏的真状态：
+        // 只按模组的记账会把"玩家自己抬的价"整个漏掉，而那是顾客实实在在看到的既成事实。
+        // BargainUIManager.Refresh 在换人时清零，读数只属于柜前这一位
+        BargainUIManager manager = BargainUIManager.Instance;
+        if (manager != null)
+        {
+            if (manager.MarkupOffered) negotiation["markupNow"] = manager.MarkupPercent;
+            if (manager.DiscountOffered) negotiation["discountNow"] = manager.DiscountPercent;
+            if (manager.BlackmailOffered) negotiation["blackmailed"] = true;
+            if (manager.ThreatenOffered) negotiation["threatened"] = true;
+        }
         int debt = CreditBook.DebtOf(identifier);
         if (debt > 0)
         {

@@ -25,6 +25,7 @@ internal static class SpeechSettings
     internal const int DefaultBargainMaxRounds = 3;
     internal const int DefaultLineLength = 400;
     internal const int DefaultTimeoutSeconds = 120;
+    internal const int DefaultBubbleTimeoutSeconds = 15;
 
     private const string FileName = "speech_settings.txt";
 
@@ -33,11 +34,16 @@ internal static class SpeechSettings
         public int dailyCap = DefaultDailyRequestCap;
         public int lineLength = DefaultLineLength;
         public int timeoutSeconds = DefaultTimeoutSeconds;
+        public int bubbleTimeoutSeconds = DefaultBubbleTimeoutSeconds;
 
         public int bargainMin = DefaultBargainMinPercent;
         public int bargainMax = DefaultBargainMaxPercent;
         public int bargainCumulative = DefaultBargainMaxCumulative;
         public int bargainRounds = DefaultBargainMaxRounds;
+
+        // 文风包：单独模块，键名见 StyleBook；自定义文本走 styleCustom
+        public string stylePack = StyleBook.DefaultKey;
+        public string styleCustom = string.Empty;
     }
 
     private static string _modId;
@@ -78,6 +84,47 @@ internal static class SpeechSettings
             int clamped = Mathf.Clamp(value, 10, 600);
             if (clamped == _data.timeoutSeconds) return;
             _data.timeoutSeconds = clamped;
+            Save();
+        }
+    }
+
+    // 当前文风包键名。写入时就归一：未知键当场落成默认档，
+    // 不然设置里存着 "nosuchpack"、提示词里用的却是默认档，两处各说各话
+    public static string StylePack
+    {
+        get => _data.stylePack;
+        set
+        {
+            string key = StyleBook.Find(value).Key;
+            if (string.Equals(key, _data.stylePack, StringComparison.OrdinalIgnoreCase)) return;
+            _data.stylePack = key;
+            Save();
+        }
+    }
+
+    // 自定义文风正文：只在 stylePack=custom 时被读
+    public static string StyleCustom
+    {
+        get => _data.styleCustom;
+        set
+        {
+            string text = value ?? string.Empty;
+            if (text.Length > 600) text = text.Substring(0, 600);
+            if (text == _data.styleCustom) return;
+            _data.styleCustom = text;
+            Save();
+        }
+    }
+
+    // 对话气泡等待回复的超时秒数：超时后左上角报错并给固定回复
+    public static int BubbleTimeoutSeconds
+    {
+        get => _data.bubbleTimeoutSeconds;
+        set
+        {
+            int clamped = Mathf.Clamp(value, 5, 60);
+            if (clamped == _data.bubbleTimeoutSeconds) return;
+            _data.bubbleTimeoutSeconds = clamped;
             Save();
         }
     }
@@ -155,17 +202,30 @@ internal static class SpeechSettings
                 int eq = line.IndexOf('=');
                 if (eq <= 0) continue;
                 string key = line.Substring(0, eq).Trim();
-                if (!int.TryParse(line.Substring(eq + 1).Trim(), out int value)) continue;
+                string value = line.Substring(eq + 1).Trim();
+                // 文风两项是文本值，不能走 int 解析；其余越界或损坏的值夹回合法区间，未知键忽略
+                if (key == "stylePack")
+                {
+                    // 未知键名不整条丢掉：Find 会回落到默认档
+                    data.stylePack = StyleBook.Find(value).Key;
+                    continue;
+                }
+                if (key == "styleCustom")
+                {
+                    data.styleCustom = value;
+                    continue;
+                }
+                if (!int.TryParse(value, out int number)) continue;
                 switch (key)
                 {
-                    // 越界或损坏的值夹回合法区间，未知键忽略
-                    case "dailyCap": data.dailyCap = Mathf.Clamp(value, 0, 60); break;
-                    case "lineLength": data.lineLength = Mathf.Clamp(value, 80, 2000); break;
-                    case "timeoutSeconds": data.timeoutSeconds = Mathf.Clamp(value, 10, 600); break;
-                    case "bargainMin": data.bargainMin = Mathf.Clamp(value, 1, 50); break;
-                    case "bargainMax": data.bargainMax = Mathf.Clamp(value, 5, 90); break;
-                    case "bargainCumulative": data.bargainCumulative = Mathf.Clamp(value, 5, 90); break;
-                    case "bargainRounds": data.bargainRounds = Mathf.Clamp(value, 1, 5); break;
+                    case "dailyCap": data.dailyCap = Mathf.Clamp(number, 0, 60); break;
+                    case "lineLength": data.lineLength = Mathf.Clamp(number, 80, 2000); break;
+                    case "timeoutSeconds": data.timeoutSeconds = Mathf.Clamp(number, 10, 600); break;
+                    case "bubbleTimeoutSeconds": data.bubbleTimeoutSeconds = Mathf.Clamp(number, 5, 60); break;
+                    case "bargainMin": data.bargainMin = Mathf.Clamp(number, 1, 50); break;
+                    case "bargainMax": data.bargainMax = Mathf.Clamp(number, 5, 90); break;
+                    case "bargainCumulative": data.bargainCumulative = Mathf.Clamp(number, 5, 90); break;
+                    case "bargainRounds": data.bargainRounds = Mathf.Clamp(number, 1, 5); break;
                 }
             }
             return data;
@@ -185,10 +245,13 @@ internal static class SpeechSettings
                 + "dailyCap=" + _data.dailyCap + "\n"
                 + "lineLength=" + _data.lineLength + "\n"
                 + "timeoutSeconds=" + _data.timeoutSeconds + "\n"
+                + "bubbleTimeoutSeconds=" + _data.bubbleTimeoutSeconds + "\n"
                 + "bargainMin=" + _data.bargainMin + "\n"
                 + "bargainMax=" + _data.bargainMax + "\n"
                 + "bargainCumulative=" + _data.bargainCumulative + "\n"
-                + "bargainRounds=" + _data.bargainRounds + "\n";
+                + "bargainRounds=" + _data.bargainRounds + "\n"
+                + "stylePack=" + _data.stylePack + "\n"
+                + "styleCustom=" + (_data.styleCustom ?? string.Empty).Replace('\n', ' ') + "\n";
             ModHelper.WriteModDataFileText(_modId, FileName, text);
         }
         catch (Exception)

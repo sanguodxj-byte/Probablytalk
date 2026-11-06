@@ -195,6 +195,8 @@ internal sealed class SettingsUI : MonoBehaviour
     {
         string normalized = Player2Config.NormalizeEndpointUrl(text);
         config.SetFallbackEndpoint(normalized);
+        // 只配 BYO 的玩家也要被视为可用：端点一改就重算在线态
+        client?.RefreshOnlineState();
         if (endpointInput != null && endpointInput.input != null)
         {
             endpointInput.input.text = normalized;
@@ -443,6 +445,7 @@ internal sealed class SettingsUI : MonoBehaviour
     // 以及上限为 0 时的提示横幅，都在这一屏里；原生菜单不再登记任何条目。
     private readonly List<CustomUIElement> capGated = new List<CustomUIElement>();
     private CustomUIElement capNote;
+    private CustomUIElement styleNote;
 
     public void OpenSettingsWindow()
     {
@@ -453,6 +456,7 @@ internal sealed class SettingsUI : MonoBehaviour
         gearWindow = b.GetWindow();
         capGated.Clear();
         capNote = null;
+        styleNote = null;
 
         // 提示词
         SectionHeader(b, "section_prompt", "Role Instruction", "sec_prompt");
@@ -479,6 +483,10 @@ internal sealed class SettingsUI : MonoBehaviour
         LabeledStepper(b, "opt_timeout_label", "Request Timeout (s)", "opt_timeout_tooltip", "Per-request timeout in seconds.",
             10f, 600f, SpeechSettings.TimeoutSeconds,
             v => SpeechSettings.TimeoutSeconds = Mathf.RoundToInt(v), "timeout", gated: true);
+        LabeledStepper(b, "opt_bubble_timeout_label", "Reply Bubble Timeout (s)", "opt_bubble_timeout_tooltip",
+            "Seconds to wait for a reply before showing an error and a fixed line.",
+            5f, 60f, SpeechSettings.BubbleTimeoutSeconds,
+            v => SpeechSettings.BubbleTimeoutSeconds = Mathf.RoundToInt(v), "bubbletimeout", gated: true);
 
         // 上限为 0 的提示横幅：紧跟生成节奏一组，默认藏起来，由 ApplyCapGate 现算现显
         b.BeginRow(4f, TextAnchor.MiddleLeft);
@@ -487,6 +495,17 @@ internal sealed class SettingsUI : MonoBehaviour
         capNote.SetFlexible(1f, 0f);
         b.End();
         b.AddSpace(10f);
+
+        // 文风包：单独模块，选中的那条以方括号指令压在台词请求的最后一条消息末尾
+        SectionHeader(b, "section_style", "Writing Style", "sec_style");
+        b.BeginRow(6f, TextAnchor.MiddleLeft);
+        b.AddButton(Loc("btn_style_cycle", "Cycle style pack"), OnCycleStyle, "btn_style_cycle");
+        b.AddLabel(string.Empty, "style_note");
+        styleNote = b.Last;
+        styleNote.SetFlexible(1f, 0f);
+        b.End();
+        b.AddSpace(10f);
+        ApplyStyleNote();
 
         // 议价门槛：提示词里下发的数字与这里同一份设置，模型看到的上下限就是真正生效的
         SectionHeader(b, "section_bargain", "Bargain Limits", "sec_bargain");
@@ -512,12 +531,38 @@ internal sealed class SettingsUI : MonoBehaviour
     }
 
     // 每日上限=0 等价于关闭 AI 发言：单句长度与超时这时没有对象可作用，灰掉比留着更诚实；
-    // 上限滑条自己不能被关掉
+    // 上限自己的步进不能被关掉
     private void ApplyCapGate()
     {
         bool on = SpeechSettings.DailyRequestCap > 0;
         foreach (CustomUIElement element in capGated) element?.SetInteractable(on);
         capNote?.SetText(on ? string.Empty : Loc("group_speech_note", "Daily request cap is 0: no AI speech is requested."));
+    }
+
+    // 文风包切换：只改设置，下一条台词就用新口径。这里不判"这条好不好"——那是看回包的事
+    private void OnCycleStyle()
+    {
+        SpeechSettings.StylePack = StyleBook.NextKey(SpeechSettings.StylePack);
+        ApplyStyleNote();
+    }
+
+    private void ApplyStyleNote()
+    {
+        StyleBook.Pack pack = StyleBook.Find(SpeechSettings.StylePack);
+        string body;
+        if (pack.Key == StyleBook.AutoKey)
+        {
+            // auto 没有固定正文，给一条样例：下层市民 + 中立好感 + 中等话量
+            body = StyleBook.Auto(ClientKind.Lower, 50, 50);
+        }
+        else if (pack.Key == "custom")
+        {
+            body = string.IsNullOrWhiteSpace(SpeechSettings.StyleCustom)
+                ? Loc("style_custom_empty", "(custom text not set)")
+                : SpeechSettings.StyleCustom;
+        }
+        else body = pack.Directive;
+        styleNote?.SetText(Loc("style_note_prefix", "Active style") + ": " + pack.Label + " — " + body);
     }
 
     // 游戏的 CustomUIManager 没给 Slider 分配预制体：实测日志逐条报
@@ -608,6 +653,8 @@ internal sealed class SettingsUI : MonoBehaviour
         IList<string> options = Player2Config.ProviderOptions;
         if (index < 0 || index >= options.Count) return;
         config.SetProvider(options[index]);
+        // 提供商预设可能改变兜底端点，重算在线态（只配 BYO 时不会再被判 offline）
+        client?.RefreshOnlineState();
         if (apiWindow != null && apiWindow.IsAlive)
         {
             OpenApiWindow();

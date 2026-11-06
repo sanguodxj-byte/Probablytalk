@@ -56,7 +56,6 @@ internal static class RegularManager
         public string Faction;
         public int Tier;
         public string PrefsJson;
-        public string Memory;
         public string Status;
         public int Visits;
         public int LastVisitDay;
@@ -113,15 +112,13 @@ internal static class RegularManager
                 ApplyField(profile, field, ModHelper.GetModData(_modId, key));
             }
 
-            // 名字/派系/记忆统一从顾客档案回填，regular 侧只负责调度状态
+            // 名字/派系统一从顾客档案回填，regular 侧只负责调度状态
             foreach (RegularProfile profile in Profiles.Values)
             {
                 string name = CustomerArchive.NameOf(profile.Identifier);
                 string faction = CustomerArchive.FactionOf(profile.Identifier);
-                string memory = CustomerArchive.MemoryOf(profile.Identifier);
                 if (!string.IsNullOrEmpty(name)) profile.DisplayName = name;
                 if (!string.IsNullOrEmpty(faction)) profile.Faction = faction;
-                if (!string.IsNullOrEmpty(memory)) profile.Memory = memory;
             }
         }
         catch (Exception ex)
@@ -189,6 +186,16 @@ internal static class RegularManager
         }
     }
 
+    // 好感度只对常客生效：档案在册、未退场，且关系已达到熟客档
+    internal static bool IsRegular(string identifier)
+    {
+        if (string.IsNullOrEmpty(identifier)) return false;
+        RegularProfile profile;
+        return Profiles.TryGetValue(identifier, out profile)
+            && profile.Status == StatusActive
+            && profile.Tier >= TierRegular;
+    }
+
     // 成交记录（StoreClient.CompleteBusiness 后缀入口）：只记最近成交日供沉淀窗口判断
     public static void OnDealCompleted(string identifier)
     {
@@ -229,25 +236,7 @@ internal static class RegularManager
         }
     }
 
-    // 发言包顺带产出的记忆摘要：只落常客档案，原文照录
-    public static void OnMemoryProduced(string identifier, string memory)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(identifier) || string.IsNullOrWhiteSpace(memory)) return;
-            RegularProfile profile;
-            if (!Profiles.TryGetValue(identifier, out profile)) return;
-            string text = memory.Trim();
-            if (profile.Memory == text) return;
-            profile.Memory = text;
-            // 记忆与 summary 同源：写进顾客档案，不再是 regular 的独立字段
-            CustomerArchive.SetMemory(identifier, text);
-        }
-        catch (Exception ex)
-        {
-            if (_log != null) _log.Warning("Regular memory failed: " + ex.Message);
-        }
-    }
+    // 发言包不再单独产出记忆：完整往来由 CustomerArchive.Transcript 承担
 
     // 发言上下文追加：仅活跃常客附加关系档位、常客到访数、偏好快照与记忆摘要
     public static void AppendSpeechContext(JObject context, string identifier)
@@ -261,7 +250,9 @@ internal static class RegularManager
             {
                 ["tier"] = profile.Tier,
                 ["visits"] = profile.Visits,
-                ["memory"] = CustomerArchive.MemoryOf(identifier) ?? profile.Memory ?? string.Empty,
+                // 好感度（0-100）与档位词：只给事实与标签，怎么说话由模型自己演
+                ["affinity"] = CustomerArchive.AffinityOf(identifier),
+                ["affinity_label"] = AffinityBook.LabelOf(identifier),
             };
             if (!string.IsNullOrEmpty(profile.PrefsJson))
             {
@@ -362,7 +353,6 @@ internal static class RegularManager
                 Faction = client.clientFaction,
                 Tier = TierStranger,
                 PrefsJson = BuildPrefsJson(client),
-                Memory = string.Empty,
                 Status = StatusActive,
                 Visits = 0,
                 LastVisitDay = dealDay,
@@ -484,7 +474,6 @@ internal static class RegularManager
                 ["visits"] = profile.Visits,
                 ["lastVisitDay"] = profile.LastVisitDay,
                 ["nextVisitDay"] = profile.NextVisitDay,
-                ["memory"] = CustomerArchive.MemoryOf(profile.Identifier) ?? profile.Memory,
             });
         }
         return list.ToString(Formatting.None);
