@@ -11,5 +11,11 @@ Probablytalk.dll
 coding_memory/
 memory/
 context/
+messages/
+prompt_attachment/
+skills/
+todo/
+agents/
+__pycache__/
 *.log
 *.txt
